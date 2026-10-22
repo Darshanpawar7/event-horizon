@@ -2,7 +2,7 @@
 Uses a training-input ZIP, avoiding changes to original logs. Standard library only.
 """
 import argparse,csv,io,json,math,zipfile
-from collections import defaultdict,Counter
+from collections import defaultdict
 from pathlib import Path
 from statistics import mean,median
 

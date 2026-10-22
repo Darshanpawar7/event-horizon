@@ -68,7 +68,6 @@ def run(args):
                     writer=cv2.VideoWriter(str(out/'flow_overlay.mp4'),cv2.VideoWriter_fourcc(*'mp4v'),fps,(w,h))
                     if not writer.isOpened():raise ValueError('Cannot create overlay video')
                 for k,c in enumerate(result['cells']):
-                    x,y=round((k%3+.5)*w/3),round((k//3+.5)*h/3)
                     cv2.putText(frame,c['cell']+' '+c['state'],(k%3*w//3+5,k//3*h//3+25),cv2.FONT_HERSHEY_SIMPLEX,.35,(0,200,255),1)
                 for path in result['paths']:
                     pts=path['points']

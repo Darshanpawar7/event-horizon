@@ -1,7 +1,5 @@
 """Event Horizon backend CLI. Run commands with --help. No dashboard required."""
 import argparse
-import csv
-import hashlib
 import json
 import math
 from pathlib import Path
