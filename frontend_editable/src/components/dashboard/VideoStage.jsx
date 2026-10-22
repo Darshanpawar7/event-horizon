@@ -1,4 +1,5 @@
-import { ZONE_IDS, ZONE_LABELS } from '../../data/venueModel';
+import { ZONE_IDS } from '../../data/venueModel';
+import { useVenue } from '../../store/derived';
 import { NEO, MONO } from '../../theme';
 
 /** Frame-difference value treated as full-scale for the per-tile bar. */
@@ -16,6 +17,7 @@ const MOTION_FULL_SCALE = 24;
  * zone in the twin.
  */
 export default function VideoStage({ videoRef, src, reading, selectedZone, onSelectZone, onTimeUpdate }) {
+  const venue = useVenue();
   const warming = reading.status === 'WARMING UP';
 
   return (
@@ -58,7 +60,7 @@ export default function VideoStage({ videoRef, src, reading, selectedZone, onSel
                   <button
                     type="button"
                     onClick={() => onSelectZone(id)}
-                    title={`Select ${id} — ${ZONE_LABELS[id]}`}
+                    title={`Select ${id} — ${venue.zoneLabels[id] || id}`}
                     style={{ ...tileTagStyle, background: accent }}
                   >
                     {id}

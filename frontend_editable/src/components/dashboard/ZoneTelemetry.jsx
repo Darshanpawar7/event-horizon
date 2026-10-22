@@ -9,10 +9,9 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
-import { useVenueStore, isDemo } from '../../store/useVenueStore';
+import { useVenueStore } from '../../store/useVenueStore';
 import { useForecast, useZones, useSelectedZone } from '../../store/derived';
-import { ZONE_AREA_M2, ZONE_LABELS } from '../../data/venueModel';
-import { Panel, StatCard, Callout, ProvenanceTag } from './primitives';
+import { Panel, StatCard, Callout } from './primitives';
 import { NEO, MONO, densityStep, densityBand } from '../../theme';
 
 /** Per-zone telemetry for the cell selected in the twin. */
@@ -22,10 +21,10 @@ export default function ZoneTelemetry() {
   const forecast = useForecast();
   const horizon = useVenueStore((state) => state.horizon);
   const threshold = useVenueStore((state) => state.threshold);
-  const demo = useVenueStore(isDemo);
   const setSelectedZone = useVenueStore((state) => state.setSelectedZone);
 
-  const tone = forecast.origin === 'observed' ? 'observed' : demo ? 'simulated' : 'simulated';
+  // A backend grid is observed evidence; anything else on screen is simulated.
+  const tone = forecast.origin === 'observed' ? 'observed' : 'simulated';
 
   const series = useMemo(() => {
     if (!zone) return [];
@@ -43,9 +42,9 @@ export default function ZoneTelemetry() {
     ];
   }, [zone, forecast, threshold]);
 
-  if (!zone) {
-    return <EmptyState count={zones.filter((entry) => entry.ratio != null).length} />;
-  }
+  // App.jsx renders ZoneEmptyState instead of this component while no zone is
+  // selected, so this chunk (and recharts) is only loaded once one is.
+  if (!zone) return null;
 
   const known = zone.ratio != null;
   const { color, label } = densityStep(zone.ratio);
@@ -55,7 +54,7 @@ export default function ZoneTelemetry() {
   return (
     <div>
       <Panel
-        title={`ZONE ${zone.id} — ${ZONE_LABELS[zone.id] || 'Zone'}`}
+        title={`ZONE ${zone.id} — ${zone.label}`}
         tag={known ? label : 'NO PROJECTION'}
         tone={known ? tone : 'missing'}
       >
@@ -123,7 +122,7 @@ export default function ZoneTelemetry() {
                 {densityBand(zone.density).label}
               </div>
               <div style={{ fontFamily: MONO, fontSize: 8, color: NEO.grey, marginTop: 3 }}>
-                OVER A SIMULATED {ZONE_AREA_M2} m² ZONE
+                OVER A SIMULATED {Math.round(zone.area)} m² ZONE
               </div>
             </div>
           </div>
@@ -211,37 +210,6 @@ export default function ZoneTelemetry() {
   );
 }
 
-/** Shown until the operator selects a zone in the twin. */
-function EmptyState({ count }) {
-  return (
-    <div style={emptyStyle}>
-      <svg
-        width="56"
-        height="56"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke={NEO.grey}
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        style={{ marginBottom: 20, opacity: 0.8 }}
-      >
-        <rect x="3" y="3" width="18" height="18" rx="1" />
-        <path d="M9 3v18M15 3v18M3 9h18M3 15h18" />
-        <circle cx="15" cy="15" r="2.6" strokeDasharray="3 3" />
-      </svg>
-      <div style={{ fontFamily: MONO, fontSize: 12, fontWeight: 'bold', color: NEO.ink, lineHeight: 1.6, maxWidth: 320 }}>
-        Select a zone in the 3D digital twin to inspect its concentration evidence.
-      </div>
-      <div style={{ marginTop: 14 }}>
-        <ProvenanceTag tone={count ? 'observed' : 'missing'}>
-          {count ? `${count}/9 ZONES WITH A PROJECTION` : 'NO ZONE PROJECTION THIS INTERVAL'}
-        </ProvenanceTag>
-      </div>
-    </div>
-  );
-}
-
 const captionStyle = {
   fontFamily: MONO,
   fontSize: 8,
@@ -289,20 +257,6 @@ const clearButtonStyle = {
   padding: '3px 8px',
   cursor: 'pointer',
   borderRadius: 2,
-};
-
-const emptyStyle = {
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  justifyContent: 'center',
-  padding: '44px 24px',
-  textAlign: 'center',
-  background: NEO.surface,
-  border: `2px solid ${NEO.ink}`,
-  boxShadow: `4px 4px 0px 0px ${NEO.ink}`,
-  borderRadius: 4,
-  marginBottom: 14,
 };
 
 const tickStyle = { fontFamily: MONO, fontSize: 9, fill: NEO.ink };

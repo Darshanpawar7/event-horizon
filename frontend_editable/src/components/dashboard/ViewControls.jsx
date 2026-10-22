@@ -1,6 +1,5 @@
 import { useVenueStore, isDemo, thresholdConfig } from '../../store/useVenueStore';
-import { useForecast } from '../../store/derived';
-import { ZONE_AREA_M2 } from '../../data/venueModel';
+import { useForecast, useVenue } from '../../store/derived';
 import OverlayPanel from '../digitalTwin/OverlayPanel';
 import { NEO, MONO, densityBand } from '../../theme';
 
@@ -28,14 +27,15 @@ export default function ViewControls() {
   const setThreshold = useVenueStore((state) => state.setThreshold);
   const toggleOverlay = useVenueStore((state) => state.toggleOverlay);
   const scenario = useVenueStore((state) => state.scenario);
+  const venue = useVenue();
   const forecast = useForecast();
 
   const available = forecast.status !== 'UNAVAILABLE';
   // Scenarios differ by an order of magnitude in occupancy, so the slider
   // rescales with the one selected rather than pinning a single fixed range.
-  const [thresholdMin, thresholdMax] = thresholdConfig(scenario).range;
+  const [thresholdMin, thresholdMax] = thresholdConfig(scenario, venue).range;
   const filled = ((threshold - thresholdMin) / (thresholdMax - thresholdMin)) * 100;
-  const band = densityBand(threshold / ZONE_AREA_M2);
+  const band = densityBand(threshold / venue.cellArea);
 
   return (
     <OverlayPanel
@@ -88,7 +88,7 @@ export default function ViewControls() {
           type="range"
           min={thresholdMin}
           max={thresholdMax}
-          step={thresholdMax > 200 ? 10 : 1}
+          step={thresholdMax > 1000 ? 50 : thresholdMax > 200 ? 10 : 1}
           value={threshold}
           onChange={(event) => setThreshold(Number(event.target.value))}
           aria-label="Concentration threshold in projected tracks"
@@ -108,9 +108,9 @@ export default function ViewControls() {
             <>
               ≈{' '}
               <span style={{ color: band.color, fontWeight: 900 }}>
-                {(threshold / ZONE_AREA_M2).toFixed(2)} /m²
+                {(threshold / venue.cellArea).toFixed(2)} /m²
               </span>{' '}
-              over a simulated {ZONE_AREA_M2} m² zone. Illustrative count threshold, not a risk
+              over a simulated {Math.round(venue.cellArea)} m² zone. Illustrative count threshold, not a risk
               probability.
             </>
           ) : (

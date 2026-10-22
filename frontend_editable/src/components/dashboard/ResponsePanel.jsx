@@ -15,7 +15,7 @@ export default function ResponsePanel() {
   const incident = useIncident();
   const procedure = useVenueStore(selectProcedure);
   const checks = useVenueStore((state) => state.checks);
-  const acknowledged = useVenueStore((state) => state.acknowledged);
+  const acknowledgedId = useVenueStore((state) => state.acknowledgedId);
   const setIncidentId = useVenueStore((state) => state.setIncidentId);
   const toggleCheck = useVenueStore((state) => state.toggleCheck);
   const acknowledge = useVenueStore((state) => state.acknowledge);
@@ -28,7 +28,7 @@ export default function ResponsePanel() {
     loadSop(sopId);
   }, [demo, sopId, loadSop]);
 
-  const done = acknowledged || incident?.status === 'acknowledged';
+  const done = (incident && acknowledgedId === incident.incident_id) || incident?.status === 'acknowledged';
 
   return (
     <div>

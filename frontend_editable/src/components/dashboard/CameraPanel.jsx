@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useVenueStore, selectObservation, selectStale, isDemo } from '../../store/useVenueStore';
-import { useMetrics } from '../../store/derived';
+import { useMetrics, useVenue } from '../../store/derived';
 import useVideoAnalysis from '../../hooks/useVideoAnalysis';
 import { CHANGED_TILES } from '../../lib/videoSignals';
 import { isTimelineScenario } from '../../data/crowdTimeline';
@@ -35,6 +35,7 @@ const QUALITY_TONE = {
  */
 export default function CameraPanel() {
   const demo = useVenueStore(isDemo);
+  const venue = useVenue();
   const metrics = useMetrics();
   const observation = useVenueStore(selectObservation);
   const stale = useVenueStore(selectStale);
@@ -163,7 +164,7 @@ export default function CameraPanel() {
           <input type="checkbox" checked={syncVideo} onChange={toggleSyncVideo} />
           <span>
             Drive the simulated crowd timeline from this clip's playhead
-            {!isTimelineScenario(scenario) && (
+            {!isTimelineScenario(venue, scenario) && (
               <em style={{ color: NEO.grey }}> — select a crowd timeline scenario to use this</em>
             )}
           </span>

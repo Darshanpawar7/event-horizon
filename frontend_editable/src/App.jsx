@@ -1,18 +1,24 @@
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useVenueStore, selectStale, isDemo } from './store/useVenueStore';
-import { useForecast, useSelectedZone } from './store/derived';
-import VenueScene from './components/digitalTwin/VenueScene';
+import { useForecast, useSelectedZone, useVenue } from './store/derived';
 import ForecastPanel from './components/dashboard/ForecastPanel';
 import ScenarioControls from './components/dashboard/ScenarioControls';
 import TimelineControls from './components/dashboard/TimelineControls';
-import ZoneTelemetry from './components/dashboard/ZoneTelemetry';
+import IncidentBrief from './components/dashboard/IncidentBrief';
+import ZoneEmptyState from './components/dashboard/ZoneEmptyState';
 import CameraPanel from './components/dashboard/CameraPanel';
 import ResponsePanel from './components/dashboard/ResponsePanel';
 import AssistantPanel from './components/dashboard/AssistantPanel';
 import { NEO, MONO } from './theme';
 
 const MODES = ['demo', 'backend'];
+
+// The 3D twin (three.js) and the zone chart (recharts) are the two heavy
+// libraries. Each loads in its own chunk: the console paints before the twin
+// has downloaded, and recharts is only fetched the first time a zone is selected.
+const VenueScene = lazy(() => import('./components/digitalTwin/VenueScene'));
+const ZoneTelemetry = lazy(() => import('./components/dashboard/ZoneTelemetry'));
 
 export default function App() {
   const mode = useVenueStore((state) => state.mode);
@@ -21,6 +27,7 @@ export default function App() {
   const updatedAt = useVenueStore((state) => state.updatedAt);
   const stale = useVenueStore(selectStale);
   const zone = useSelectedZone();
+  const venue = useVenue();
   const forecast = useForecast();
   const demo = useVenueStore(isDemo);
   const replayDemoSignals = useVenueStore((state) => state.replayDemoSignals);
@@ -39,7 +46,9 @@ export default function App() {
   return (
     <div className="shell">
       <div className="twin-pane">
-        <VenueScene />
+        <Suspense fallback={<ChunkLoading label="LOADING 3D TWIN" fill />}>
+          <VenueScene />
+        </Suspense>
       </div>
 
       <div className="console-pane">
@@ -47,7 +56,11 @@ export default function App() {
           <div>
             <div className="console-eyebrow">EVENT HORIZON / CROWD INTELLIGENCE</div>
             <div className="console-title">
-              {zone ? `ZONE ${zone.id} TELEMETRY` : 'VENUE RESILIENCE TWIN'}
+              {zone
+                ? `ZONE ${zone.id} TELEMETRY`
+                : venue.kind === 'historic'
+                  ? 'INCIDENT RECONSTRUCTION'
+                  : 'VENUE RESILIENCE TWIN'}
             </div>
           </div>
 
@@ -84,6 +97,9 @@ export default function App() {
           <ForecastPanel />
           <ScenarioControls />
           <TimelineControls />
+          <div id="incident-brief">
+            <IncidentBrief />
+          </div>
 
           <AnimatePresence mode="wait">
             <motion.div
@@ -93,7 +109,13 @@ export default function App() {
               exit={{ opacity: 0, y: -14 }}
               transition={{ duration: 0.16 }}
             >
-              <ZoneTelemetry />
+              {zone ? (
+                <Suspense fallback={<ChunkLoading label="LOADING ZONE TELEMETRY" />}>
+                  <ZoneTelemetry />
+                </Suspense>
+              ) : (
+                <ZoneEmptyState />
+              )}
             </motion.div>
           </AnimatePresence>
 
@@ -128,6 +150,42 @@ export default function App() {
     </div>
   );
 }
+
+/** Placeholder while a lazy chunk downloads. Says what is loading, never what the evidence is. */
+function ChunkLoading({ label, fill = false }) {
+  return (
+    <div role="status" aria-live="polite" style={fill ? loadingFillStyle : loadingPanelStyle}>
+      <span style={loadingLabelStyle}>{label}…</span>
+    </div>
+  );
+}
+
+const loadingLabelStyle = {
+  fontFamily: MONO,
+  fontSize: 10,
+  fontWeight: 900,
+  letterSpacing: '0.12em',
+  color: NEO.grey,
+  border: `2px dashed ${NEO.line}`,
+  padding: '10px 14px',
+  background: NEO.surface,
+};
+
+const loadingFillStyle = {
+  width: '100%',
+  height: '100%',
+  minHeight: 520,
+  display: 'grid',
+  placeItems: 'center',
+  background: NEO.ground,
+};
+
+const loadingPanelStyle = {
+  display: 'grid',
+  placeItems: 'center',
+  padding: '44px 24px',
+  marginBottom: 14,
+};
 
 const disclaimerStyle = {
   fontFamily: MONO,
