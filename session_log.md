@@ -172,8 +172,10 @@ asking; a request mentioning compression may be about deployment, not the repo.
 
 ### Open items
 
-- Nothing is committed. Suggested message: `feat: venue reconstructions, faster console
-  load, compressed docs, session documentation`.
+- Committed on request as ten logical commits (backend lint; API gzip and venue scenarios;
+  duplicate deck screenshots; console performance; crowd model and venues; 3D scene; console
+  panels; verification scripts; READMEs; CLAUDE.md, log and playbook) and pushed to
+  `origin/main`. Commits carry no co-author trailer, per the user's global instructions.
 - The `README` roadmap item "emit `observation.forecast` from the API" was deliberately
   not done: without a real tracker it would label demo data as backend evidence.
 - `docs/deck/photos/` are for a pitch deck that is not in the repo.
