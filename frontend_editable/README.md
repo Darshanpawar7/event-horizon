@@ -20,6 +20,12 @@ Open <http://127.0.0.1:3000>. Node 20+ required (built and tested on Node 24).
 `npm run build` produces `dist`; serve it behind a reverse proxy that routes `/api`
 to the Python API. `vite preview` does not supply the Python API.
 
+The build is split so the console paints before the heavy libraries arrive: a `three`
+chunk (three.js + React Three Fiber, loaded when the twin mounts), a `charts` chunk
+(recharts, loaded the first time a zone is selected), a `react` chunk and the
+application code. Every text asset also gets `.gz` and `.br` siblings so a static
+server can serve pre-compressed files; the plain files remain for servers that do not.
+
 ## What the twin shows
 
 The scene is the 3x3 analysed region from `crowd_forecast.py`, laid out as a venue
@@ -55,12 +61,35 @@ Observed, simulated and missing evidence are styled distinctly throughout
 (`PROVENANCE` in `src/theme.js`). Backend mode never falls back to demo data: a failed
 read shows DISCONNECTED, and an observation older than ten seconds shows STALE.
 
+## Venues and reconstructions
+
+The twin stands over whichever venue is selected in the console (`src/data/venues/`). A
+venue is plain data: cell size and floor area, zone names, gates, camera masts, perimeter
+structures as primitives, flow-corridor paths, an egress field, an optional incident brief,
+and the timelines that can play on it. The plaza keeps its two authored timelines; the five
+historic venues each carry an "as reported" timeline and a counterfactual branch, both
+produced by `src/lib/crowdModel.js` from authored parameters. `getTimeline()` in
+`src/data/crowdTimeline.js` builds and caches them; a branch depends on the operator's
+threshold and horizon because it acts at the projection's first crossing.
+
+Adding a venue means adding one file to `src/data/venues/` and registering it in
+`index.js`. Nothing in the components is venue-specific.
+
+Two scripts keep the reconstructions honest. `npm run check:venues` runs every timeline
+in Node and prints when the projection warns, when the crowd reaches onset density, the
+lead between them and the peaks of both branches. `npm run verify:console` (with
+`npm run preview` serving `dist/`) drives the installed Chrome
+headless through every venue and both branches, fails on page errors and writes a
+screenshot per state to `verify-shots/`.
+
 ## Modes
 
 - **demo** — scripted scenarios from `src/demo.js`, nothing polled.
 - **backend** — polls `/api/healthz`, `/api/cameras`, `/api/incidents` and the selected
   camera's status every two seconds. The evidence-state buttons drive
-  `POST /api/demo/scenario`, so the backend decides what the next poll reports.
+  `POST /api/demo/scenario`, so the backend decides what the next poll reports. Venue
+  timelines are sent as `<venue>:<timeline>`; the server reports their headline state and
+  the console plays the timeline itself.
 
 ## Layout
 
@@ -70,14 +99,18 @@ src/
   api.js                      backend requests
   demo.js                     explicitly simulated scenarios, sample SOP, signal scripts
   styles.css                  shell layout and base styling
-  data/venueModel.js          venue geometry and the simulated forecast grid
+  data/venueModel.js          grid conventions, scaling, the simulated forecast grid
+  data/crowdTimeline.js       timelines: authored or model-driven, lead time, branches
+  data/venues/                plaza + ndls, chinnaswamy, sangam, itaewon, loveparade
+  lib/crowdModel.js           cell-transmission crowd-flow model
   store/useVenueStore.js      state, polling, actions, pure derivations
   store/derived.js            memoised hooks over those derivations
-  components/digitalTwin/     VenueScene, VenuePlaza, ZoneTile, CrowdParticles,
-                              CrowdFlow, CameraMasts, ExitGates, SceneEffects,
-                              SignalOverlay
-  components/dashboard/       ForecastPanel, ScenarioControls, ZoneTelemetry,
-                              CameraPanel, ResponsePanel, AssistantPanel,
+  components/digitalTwin/     VenueScene, VenuePlaza, Structures, ZoneTile, CrowdParticles,
+                              CrowdFlow, CameraMasts, ExitGates, SceneEffects, CameraRig,
+                              SignalOverlay, PitchGuide, OverlayPanel
+  components/dashboard/       ForecastPanel, ScenarioControls, TimelineControls,
+                              IncidentBrief, ZoneTelemetry, ZoneEmptyState, CameraPanel,
+                              SourcePicker, VideoStage, ResponsePanel, AssistantPanel,
                               ViewControls, primitives
 ```
 

@@ -14,7 +14,7 @@ system claims that a crowd is safe.
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
 [![three.js](https://img.shields.io/badge/three.js-r184-000000?logo=threedotjs&logoColor=white)](https://threejs.org/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.45%2B-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io/)
-[![Tests](https://img.shields.io/badge/tests-38%20passing-28A745)](#testing)
+[![Tests](https://img.shields.io/badge/tests-48%20passing-28A745)](#testing)
 [![Status](https://img.shields.io/badge/status-prototype-FF6600)](#limitations-and-responsible-use)
 
 **Sharvesh K** · **Darshan P Pawar**
@@ -30,6 +30,7 @@ system claims that a crowd is safe.
 
 - [The problem](#the-problem)
 - [What Event Horizon does](#what-event-horizon-does)
+- [Historic incident reconstructions](#historic-incident-reconstructions)
 - [Screenshot tour](#screenshot-tour)
   - [The 3D digital twin](#the-3d-digital-twin)
   - [Zone telemetry](#zone-telemetry)
@@ -76,6 +77,7 @@ this system is ever labelled *safe*.
 | **Incident engine** | Deterministic priority rules over the observation, each mapped to a sample SOP. No model, no probability, no automatic action. |
 | **3D digital twin** | A React Three Fiber venue plaza whose zones, corridors, cameras, gates and atmosphere are all driven by the same evidence the console shows. |
 | **Operator assistant** | Answers grounded strictly in the supplied incident and SOP. Falls back to a deterministic scripted answer whenever no LLM key is configured or a call fails. |
+| **Historic reconstructions** | Five crowd disasters (New Delhi station, Chinnaswamy, the Kumbh's Sangam nose, Itaewon, Love Parade) modelled with a cell-transmission crowd-flow model from published accounts, each with a counterfactual in which an operator acts on the projection's warning. Simulated throughout; sources and caveats are in the app. |
 | **Offline classifier** | A small Random Forest baseline over reviewed, human-labelled windows, with event-level split checks. Ships untrained — no real-data model is included. |
 
 ---
@@ -272,6 +274,59 @@ The checklist is fully usable with the assistant switched off entirely.
 
 FastAPI serves interactive docs at `http://127.0.0.1:8000/docs`.
 
+## Historic incident reconstructions
+
+The twin can stand over five real crowd disasters as well as the generic plaza. Each is a
+**simulation authored from published accounts** — not footage, not an official finding,
+not a prediction — built to show what an evidence-bounded console would have put in front
+of an operator, and how much warning the projection would have given.
+
+| Venue | Incident | What the reconstruction models |
+| --- | --- | --- |
+| New Delhi Railway Station, platforms 14/15 | 15 Feb 2025 · 18 dead | A full platform, a confusing platform change, and a rush for one stair flight while people are still coming down it |
+| M. Chinnaswamy Stadium, Bengaluru | 4 Jun 2025 · 11 dead | Crowds at the gates after a free-pass announcement, gates opening and closing, the forecourt loading faster than it can drain |
+| Sangam nose, Maha Kumbh Mela, Prayagraj | 29 Jan 2025 · 30 dead by the first official count; disputed | Pilgrims resting at a barricade line, an approach that out-runs the gaps, barricades giving way, pontoon bridges closed |
+| Itaewon alley, Seoul | 29 Oct 2022 · 159 dead | A 3.2 m alley filled from both ends; two-way movement throttling both exits |
+| Love Parade, Duisburg | 24 Jul 2010 · 21 dead | Two tunnels feeding one ramp used as entrance and exit, cordons at the top opening and closing |
+
+How it works:
+
+- **A crowd-flow model, not keyframes.** `frontend_editable/src/lib/crowdModel.js` is a
+  nine-cell cell-transmission model for pedestrians (Daganzo's sending/receiving rule with
+  Weidmann's fundamental diagram: free speed 1.34 m/s, jam density 5.4 P/m², capacity about
+  1.3 P/m/s). Each venue authors arrivals, exits, openings and the events of the day —
+  a barricade failing, a gate shutting, a cordon narrowing — and the model produces per-cell
+  counts every second. The constant-velocity projection then runs over those counts exactly
+  as it would over tracks.
+- **A counterfactual branch.** Every reconstruction has a second timeline: the same model,
+  with an operator acting on the projection's first threshold crossing after a stated
+  reaction time (90 s). Switching branches keeps the clock, so the same moment can be read
+  on both; the timeline panel compares peak density, time above crush risk and people held
+  outside the camera's view. Move the threshold and the warning, the action and the outcome
+  all move with it.
+- **Honest about what it is.** The in-app incident brief carries the reported facts with
+  their sources and disputed figures, lists where the model simplifies, and says in so many
+  words that nothing here claims any death was preventable by software alone. Every count
+  in a reconstruction is labelled SIMULATED, the same way the plaza's are.
+
+![New Delhi station reconstruction](docs/screenshots/13-reconstruction-ndls.png)
+
+<img src="docs/screenshots/14-counterfactual-sangam.png" alt="Sangam nose counterfactual with the branch comparison" width="720">
+
+Default thresholds, lead times and outcomes at the console's default +2 s horizon
+(`node scripts/venue_check.mjs 2` reproduces the table):
+
+| Venue | Warning before onset of crush-risk density | As reported · peak | With the warning acted on · peak |
+| --- | ---: | ---: | ---: |
+| New Delhi station | 4 min 11 s | 8.3 P/m² | 2.9 P/m² |
+| Chinnaswamy gates | 54 s | 9.0 P/m² | 4.8 P/m² (0 s critical) |
+| Sangam nose | 4 min 06 s | 5.1 P/m² | 2.8 P/m² |
+| Itaewon alley | 2 min 23 s | 8.9 P/m² | 2.9 P/m² |
+| Love Parade ramp | 1 min 10 s | 9.0 P/m² | 3.8 P/m² (0 s critical) |
+
+These are properties of the simulation and of its authored parameters. They are reported
+so the demo can be reproduced, not as findings about the events.
+
 ---
 
 ## Architecture
@@ -356,13 +411,18 @@ event-horizon/
 ├── frontend_editable/          operator console + 3D digital twin
 │   └── src/
 │       ├── theme.js            design tokens and the PROVENANCE contract
-│       ├── data/venueModel.js  venue geometry and the simulated forecast grid
+│       ├── data/venueModel.js  grid conventions and the simulated forecast grid
+│       ├── data/crowdTimeline.js timelines: authored keyframes or crowd-model runs, lead time, branches
+│       ├── data/venues/        plaza + five historic reconstructions (geometry, brief, model parameters)
+│       ├── lib/crowdModel.js   cell-transmission crowd-flow model (Weidmann fundamental diagram)
 │       ├── store/              zustand state, polling, pure derivations
 │       └── components/
 │           ├── digitalTwin/    VenueScene · VenuePlaza · ZoneTile · CrowdParticles ·
-│           │                   CrowdFlow · CameraMasts · ExitGates · SceneEffects
+│           │                   CrowdFlow · CameraMasts · ExitGates · SceneEffects ·
+│           │                   Structures · CameraRig · PitchGuide
 │           └── dashboard/      ForecastPanel · ZoneTelemetry · CameraPanel ·
-│                               ResponsePanel · AssistantPanel · ScenarioControls
+│                               ResponsePanel · AssistantPanel · ScenarioControls ·
+│                               TimelineControls · IncidentBrief
 │
 └── docs/screenshots/           the images in this README
 ```
@@ -563,16 +623,28 @@ python -m unittest discover -s .\backend\api -p "test_*.py" -v
 python -m unittest discover -s .\backend -p "test_*.py" -v
 ```
 
-Verified on this checkout (Windows 11, Python 3.14):
+The console has two checks of its own, both in `frontend_editable/scripts/`:
+
+```powershell
+cd frontend_editable
+npm run check:venues        # builds every reconstruction and prints warning time, onset, lead and peaks
+npm run preview             # serve dist/ on 127.0.0.1:4173, then in another terminal:
+npm run verify:console      # drives installed Chrome headless through every venue; screenshots in verify-shots/
+```
+
+Verified on this checkout (Windows 11; a Python 3.12 virtual environment created with
+`--system-site-packages` for the API and the offline pipeline, Python 3.14 for the
+pure-Python reasoning tests):
 
 | Suite | Tests | Result |
 | --- | ---: | --- |
 | `test_crowd_signals.py` + `test_crowd_forecast.py` | 16 | ✅ pass |
 | `backend/api/test_incident_engine.py` | 4 | ✅ pass |
+| `backend/api/test_scenarios.py` | 4 | ✅ pass |
 | `backend/test_flow_field.py` | 8 | ✅ pass |
 | `backend/test_crowd_signals.py` | 8 | ✅ pass |
 | `backend/test_trajectory_features.py` | 2 | ✅ pass |
-| `backend/test_backend.py` | — | ⚠️ not exercised here — the scikit-learn/SciPy DLLs are blocked by this machine's Application Control policy, so the module cannot import |
+| `backend/test_backend.py` | 6 | ✅ pass on Python 3.12 (on this machine's Python 3.14 the scikit-learn/SciPy DLLs are blocked by Application Control, so use the 3.12 venv) |
 
 The tests cover exactly the failure modes the product claims to handle: memory expiry,
 degraded-view gating, velocity gaps, opposed motion, missing signals, tile quality
@@ -602,6 +674,7 @@ This is a prototype. Read this section before pointing it at anything real.
 **On the outputs**
 
 - Sample SOPs are demonstration content, not venue-approved operating procedures.
+- The historic reconstructions are simulations authored from published accounts and driven by a simple crowd-flow model. They are not footage, findings or predictions; the inquiries determine causes, and nothing in them claims that any death was preventable by software alone.
 - The collective-motion rule is a simulated verification alert, not a validated surge predictor. Agreement between tracking and optical flow is not surge-detection accuracy.
 - Uncalibrated class scores from the offline baseline are not real-world risk probabilities. A model trained without a surge class cannot claim surge detection.
 - Incident acknowledgement is held in memory and resets when the API restarts. SOP checkboxes are local session notes.
@@ -623,6 +696,7 @@ been done.
 
 ## Roadmap
 
+- [x] Historic reconstructions with counterfactual branches, driven by a crowd-flow model (simulated; see above)
 - [ ] Emit `observation.forecast` from the API in the shape `CrowdForecast.update()` already produces — the console then flips the zone grid from simulated to observed with no UI change
 - [ ] Recorded and live analytics adapter behind the API, replacing the demo scenarios
 - [ ] Join the nine optical-flow zones into classifier training features (currently full-view only)
