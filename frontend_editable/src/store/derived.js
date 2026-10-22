@@ -1,17 +1,19 @@
 import { useMemo } from 'react';
 import {
   useVenueStore,
+  selectVenue,
   computeForecast,
   computeZones,
   computeIncidents,
   computeMetrics,
+  computeScene,
 } from './useVenueStore';
 import {
+  getTimeline,
   isTimelineScenario,
   sampleTimeline,
   timelineBounds,
   timelineLeadTime,
-  TIMELINES,
 } from '../data/crowdTimeline';
 
 // Zustand v5 caches the value a selector returns and compares it by identity.
@@ -19,66 +21,102 @@ import {
 // settles, so every derivation below selects only stable slices of state and
 // memoises the computation in the component instead.
 
-/** @returns {ReturnType<typeof computeForecast>} */
-export function useForecast() {
+/** The active venue: geometry, labels, gates, cameras, incident brief and timelines. */
+export function useVenue() {
+  return useVenueStore(selectVenue);
+}
+
+/** The stable slice every forecast-derived hook depends on. */
+function useForecastSlice() {
   const mode = useVenueStore((state) => state.mode);
   const scenario = useVenueStore((state) => state.scenario);
+  const venueId = useVenueStore((state) => state.venueId);
   const status = useVenueStore((state) => state.status);
   const threshold = useVenueStore((state) => state.threshold);
+  const horizon = useVenueStore((state) => state.horizon);
   const clockT = useVenueStore((state) => state.clockT);
   return useMemo(
-    () => computeForecast({ mode, scenario, status, threshold, clockT }),
-    [mode, scenario, status, threshold, clockT],
+    () => ({ mode, scenario, venueId, status, threshold, horizon, clockT }),
+    [mode, scenario, venueId, status, threshold, horizon, clockT],
   );
+}
+
+/** @returns {ReturnType<typeof computeForecast>} */
+export function useForecast() {
+  const slice = useForecastSlice();
+  return useMemo(() => computeForecast(slice), [slice]);
+}
+
+/**
+ * What the simulated scene is doing at this moment (motion state, visibility,
+ * peak density, the incident it implies). Simulated throughout.
+ */
+export function useScene() {
+  const slice = useForecastSlice();
+  const forecast = useForecast();
+  return useMemo(() => computeScene(slice, forecast), [slice, forecast]);
 }
 
 /**
  * Playback state for the selected timeline scenario, or null when the active
  * scenario holds a single state instead of playing out over time.
  *
- * @returns {null|{id:string, title:string, summary:string, start:number, end:number,
- *   clockT:number, phase:object, phaseIndex:number, counterflow:number,
- *   keyframes:object[], lead:{warnAt:number|null, onsetAt:number|null, leadSeconds:number|null}}}
+ * @returns {null|{id:string, title:string, summary:string, kind:string, start:number, end:number,
+ *   clockT:number, phase:object, phaseIndex:number, phases:object[], counterflow:number, outside:number,
+ *   areas:number[], intervention:object|null, stats:object, baseline:object|null,
+ *   lead:{warnAt:number|null, onsetAt:number|null, leadSeconds:number|null, onsetDensity:number, onsetLabel:string}}}
  */
 export function useTimeline() {
+  const venue = useVenue();
   const scenario = useVenueStore((state) => state.scenario);
   const clockT = useVenueStore((state) => state.clockT);
   const threshold = useVenueStore((state) => state.threshold);
   const horizon = useVenueStore((state) => state.horizon);
 
+  const timeline = useMemo(
+    () => (isTimelineScenario(venue, scenario) ? getTimeline(venue, scenario, threshold, horizon) : null),
+    [venue, scenario, threshold, horizon],
+  );
+
   // Lead time scans the whole timeline, so it is kept off the playback tick.
   const lead = useMemo(
-    () => (isTimelineScenario(scenario) ? timelineLeadTime(scenario, threshold, horizon) : null),
-    [scenario, threshold, horizon],
+    () => (timeline ? timelineLeadTime(timeline, threshold, horizon) : null),
+    [timeline, threshold, horizon],
   );
 
   return useMemo(() => {
-    if (!isTimelineScenario(scenario)) return null;
-    const timeline = TIMELINES[scenario];
-    const { start, end } = timelineBounds(scenario);
-    const { phase, phaseIndex, counterflow } = sampleTimeline(scenario, clockT);
+    if (!timeline) return null;
+    const { start, end } = timelineBounds(timeline);
+    const { phase, phaseIndex, counterflow, outside } = sampleTimeline(timeline, clockT);
     return {
       id: timeline.id,
       title: timeline.title,
       summary: timeline.summary,
-      keyframes: timeline.keyframes,
+      kind: timeline.kind,
+      phases: timeline.phases,
+      areas: timeline.areas,
+      intervention: timeline.intervention,
+      stats: timeline.stats,
+      baseline: timeline.baseline,
       start,
       end,
       clockT,
       phase,
       phaseIndex,
       counterflow,
+      outside,
       lead,
     };
-  }, [scenario, clockT, lead]);
+  }, [timeline, clockT, lead]);
 }
 
 /** @returns {ReturnType<typeof computeZones>} */
 export function useZones() {
+  const venue = useVenue();
   const forecast = useForecast();
   const horizon = useVenueStore((state) => state.horizon);
   const threshold = useVenueStore((state) => state.threshold);
-  return useMemo(() => computeZones(forecast, horizon, threshold), [forecast, horizon, threshold]);
+  return useMemo(() => computeZones(forecast, horizon, threshold, venue), [forecast, horizon, threshold, venue]);
 }
 
 /** The zone currently selected in the twin, or null. */
@@ -93,25 +131,19 @@ export function useSelectedZone() {
 
 /** The six headline metrics, each paired with its provenance. */
 export function useMetrics() {
-  const mode = useVenueStore((state) => state.mode);
-  const scenario = useVenueStore((state) => state.scenario);
-  const status = useVenueStore((state) => state.status);
+  const slice = useForecastSlice();
   const forecast = useForecast();
-  return useMemo(
-    () => computeMetrics({ mode, scenario, status }, forecast),
-    [mode, scenario, status, forecast],
-  );
+  return useMemo(() => computeMetrics(slice, forecast), [slice, forecast]);
 }
 
 /** Incidents for the current mode; demo incidents are synthesised locally. */
 export function useIncidents() {
-  const mode = useVenueStore((state) => state.mode);
-  const scenario = useVenueStore((state) => state.scenario);
+  const slice = useForecastSlice();
   const snapshot = useVenueStore((state) => state.snapshot);
-  const acknowledged = useVenueStore((state) => state.acknowledged);
+  const acknowledgedId = useVenueStore((state) => state.acknowledgedId);
   return useMemo(
-    () => computeIncidents({ mode, scenario, snapshot, acknowledged }),
-    [mode, scenario, snapshot, acknowledged],
+    () => computeIncidents({ ...slice, snapshot, acknowledgedId }),
+    [slice, snapshot, acknowledgedId],
   );
 }
 

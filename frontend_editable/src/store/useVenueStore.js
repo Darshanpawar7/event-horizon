@@ -1,26 +1,33 @@
 import { create } from 'zustand';
 import { api } from '../api';
-import { scenarios, sampleSop, signalScripts, phaseSignals } from '../demo';
+import { scenarios, sampleSop, signalScripts } from '../demo';
 import {
-  SCENARIO_THRESHOLDS,
+  ZONE_IDS,
+  directionVector,
+  scenarioThreshold,
   simulatedForecast,
   zoneRows,
-  directionVector,
 } from '../data/venueModel';
 import {
-  TIMELINES,
   formatClock,
+  getTimeline,
   isTimelineScenario,
   sampleTimeline,
   timelineBounds,
   timelineForecast,
 } from '../data/crowdTimeline';
+import { DEFAULT_VENUE_ID, getVenue } from '../data/venues';
 
 const POLL_INTERVAL_MS = 2000;
 const STALE_AFTER_MS = 10000;
 const SIGNAL_LIMIT = 12;
 const CLOCK_TICK_MS = 200;
-const DEFAULT_THRESHOLD = SCENARIO_THRESHOLDS.clear.threshold;
+
+/** Densities (persons/m²) at which a simulated incident escalates. Match DENSITY_BANDS in theme.js. */
+const CRUSH_RISK_DENSITY = 3.5;
+const CRITICAL_DENSITY = 5.0;
+/** Share of the crowd moving against the main direction that the collective-movement rule reacts to. */
+const COUNTERFLOW_ALERT = 0.2;
 
 let pollTimer = null;
 let pollController = null;
@@ -28,18 +35,36 @@ let signalTimers = [];
 let clockTimer = null;
 
 /**
- * Default concentration threshold and slider bounds for a scenario. Scenarios
- * differ by an order of magnitude in occupancy, so one fixed range would make
- * most of them unreadable.
+ * Default concentration threshold and slider bounds for a scenario on a
+ * venue. Timelines carry their own; evidence states scale with cell area so
+ * the same density reads the same on a plaza and in an alley.
  * @param {string} scenario
+ * @param {object} venue
  * @returns {{threshold:number, range:[number, number]}}
  */
-export function thresholdConfig(scenario) {
-  if (isTimelineScenario(scenario)) {
-    const timeline = TIMELINES[scenario];
-    return { threshold: timeline.threshold, range: timeline.thresholdRange };
-  }
-  return SCENARIO_THRESHOLDS[scenario] || SCENARIO_THRESHOLDS.clear;
+export function thresholdConfig(scenario, venue) {
+  const spec = venue.timelines?.[scenario];
+  if (spec) return { threshold: spec.threshold, range: spec.thresholdRange };
+  return scenarioThreshold(scenario, venue);
+}
+
+/**
+ * The scenario name the backend understands. Plaza timelines keep their
+ * historic plain ids; other venues' timelines are namespaced so the server can
+ * report the right headline state and the console can recognise the source.
+ */
+export function backendScenarioId(venue, scenario) {
+  if (!isTimelineScenario(venue, scenario) || venue.id === DEFAULT_VENUE_ID) return scenario;
+  return `${venue.id}:${scenario}`;
+}
+
+/** The built timeline for a selection, or null for a single-state scenario. */
+function timelineFor(venue, scenario, threshold, horizon) {
+  return isTimelineScenario(venue, scenario) ? getTimeline(venue, scenario, threshold, horizon) : null;
+}
+
+function currentTimeline(state) {
+  return timelineFor(getVenue(state.venueId), state.scenario, state.threshold, state.horizon);
 }
 
 function stopClockTimer() {
@@ -64,6 +89,7 @@ function abortPolling() {
 export const useVenueStore = create((set, get) => ({
   // ---- session -----------------------------------------------------------
   mode: 'demo',
+  venueId: DEFAULT_VENUE_ID,
   scenario: 'clear',
 
   // ---- backend payloads --------------------------------------------------
@@ -80,7 +106,7 @@ export const useVenueStore = create((set, get) => ({
 
   // ---- twin view controls ------------------------------------------------
   horizon: 2,
-  threshold: DEFAULT_THRESHOLD,
+  threshold: scenarioThreshold('clear', getVenue(DEFAULT_VENUE_ID)).threshold,
   overlays: { density: true, trajectories: true, flow: true, gates: true, cameras: true },
 
   // ---- timeline playback -------------------------------------------------
@@ -95,7 +121,8 @@ export const useVenueStore = create((set, get) => ({
 
   // ---- operator state ----------------------------------------------------
   checks: {},
-  acknowledged: false,
+  /** Incident id the operator acknowledged in this session, if any. */
+  acknowledgedId: null,
   signals: [],
   assistantBusy: false,
   answer: null,
@@ -116,44 +143,68 @@ export const useVenueStore = create((set, get) => ({
       incidentId: '',
       selectedZone: null,
       checks: {},
-      acknowledged: false,
+      acknowledgedId: null,
       answer: null,
       signals: [],
     });
     if (mode === 'backend') {
       // Bring the server onto the scenario already on screen, otherwise the
       // console can show one story while the backend reports another.
-      api.setScenario(get().scenario).catch((cause) => set({ error: cause.message }));
+      const venue = getVenue(get().venueId);
+      api.setScenario(backendScenarioId(venue, get().scenario)).catch((cause) => set({ error: cause.message }));
       get().startPolling();
     } else {
       get().replayDemoSignals();
     }
-    if (isTimelineScenario(get().scenario)) get().startClock();
+    if (currentTimeline(get())) get().startClock();
+  },
+
+  /**
+   * Stand the console over a different venue. The venue's default scenario is
+   * selected (a reconstruction opens on its "as reported" timeline) and every
+   * per-scenario setting is reset through setScenario.
+   */
+  setVenue: (venueId) => {
+    if (get().venueId === venueId) return;
+    const venue = getVenue(venueId);
+    stopClockTimer();
+    set({ venueId, selectedZone: null, checks: {}, acknowledgedId: null, answer: null, signals: [] });
+    get().setScenario(venue.defaultScenario || 'clear');
+    get().pushSignal(
+      'Venue',
+      `Twin now stands over ${venue.name}. Geometry, counts and timings are simulated${
+        venue.incident ? ' from published accounts of the incident' : ''
+      }.`,
+      'simulated',
+    );
   },
 
   setScenario: (scenario) => {
     stopClockTimer();
-    const timeline = isTimelineScenario(scenario);
-    const { threshold } = thresholdConfig(scenario);
+    const venue = getVenue(get().venueId);
+    const { threshold } = thresholdConfig(scenario, venue);
+    const timeline = timelineFor(venue, scenario, threshold, get().horizon);
 
     set({
       scenario,
       threshold,
       selectedZone: null,
       checks: {},
-      acknowledged: false,
+      acknowledgedId: null,
       answer: null,
       signals: [],
-      clockT: timeline ? timelineBounds(scenario).start : 0,
+      clockT: timeline ? timelineBounds(timeline).start : 0,
       phaseIndex: -1,
-      playing: timeline,
+      playing: Boolean(timeline),
     });
 
     // The threshold is an operator setting, so a change made on the operator's
     // behalf is logged rather than applied silently.
     get().pushSignal(
       'Operator',
-      `Concentration threshold set to ${threshold} projected tracks for the ${scenario.toUpperCase()} simulation.`,
+      `Concentration threshold set to ${threshold} projected tracks for ${
+        timeline ? `“${timeline.title}”` : `the ${scenario.toUpperCase()} simulation`
+      }.`,
       'simulated',
     );
 
@@ -164,8 +215,35 @@ export const useVenueStore = create((set, get) => ({
     }
     // Backend mode drives the server's own scenario switch; the next poll
     // reports whatever the backend actually returns.
-    api.setScenario(scenario).catch((cause) => set({ error: cause.message }));
+    api.setScenario(backendScenarioId(venue, scenario)).catch((cause) => set({ error: cause.message }));
     if (timeline) get().startClock();
+  },
+
+  /**
+   * Move between two timelines of the same venue — typically the reconstruction
+   * and its counterfactual — without resetting the clock, so the operator can
+   * compare the same moment on both. Falls back to setScenario for anything else.
+   */
+  switchBranch: (scenario) => {
+    const state = get();
+    if (state.scenario === scenario) return;
+    const venue = getVenue(state.venueId);
+    const next = timelineFor(venue, scenario, state.threshold, state.horizon);
+    const current = currentTimeline(state);
+    if (!next || !current) {
+      get().setScenario(scenario);
+      return;
+    }
+    set({ scenario, phaseIndex: -1, answer: null });
+    get().setClock(state.clockT);
+    get().pushSignal(
+      'Operator',
+      `Switched to “${next.title}” at ${formatClock(state.clockT)}. Same model and clock; everything after the operator action is counterfactual.`,
+      'simulated',
+    );
+    if (state.mode === 'backend') {
+      api.setScenario(backendScenarioId(venue, scenario)).catch((cause) => set({ error: cause.message }));
+    }
   },
 
   // ---- timeline playback -------------------------------------------------
@@ -177,31 +255,32 @@ export const useVenueStore = create((set, get) => ({
    */
   setClock: (clockT) => {
     const state = get();
-    if (!isTimelineScenario(state.scenario)) {
+    const timeline = currentTimeline(state);
+    if (!timeline) {
       set({ clockT });
       return;
     }
-    const { start, end } = timelineBounds(state.scenario);
+    const { start, end } = timelineBounds(timeline);
     const bounded = Math.min(end, Math.max(start, clockT));
-    const { phaseIndex, phase } = sampleTimeline(state.scenario, bounded);
+    const { phaseIndex, phase } = sampleTimeline(timeline, bounded);
     set({ clockT: bounded });
 
     if (phaseIndex === state.phaseIndex) return;
     set({ phaseIndex });
-    const line = phaseSignals[state.scenario]?.[phaseIndex];
-    if (line) {
-      get().pushSignal(line.source, `${formatClock(phase.t)} · ${line.message}`, 'simulated');
+    if (phase?.signal) {
+      get().pushSignal(phase.signal.source, `${formatClock(phase.t)} · ${phase.signal.message}`, 'simulated');
     }
   },
 
   startClock: () => {
     stopClockTimer();
-    if (!isTimelineScenario(get().scenario)) return;
+    if (!currentTimeline(get())) return;
     clockTimer = setInterval(() => {
-      const { clockT, playbackRate, scenario, playing } = get();
-      if (!playing || !isTimelineScenario(scenario)) return;
-      const { start, end } = timelineBounds(scenario);
-      const next = clockT + (CLOCK_TICK_MS / 1000) * playbackRate;
+      const state = get();
+      const timeline = currentTimeline(state);
+      if (!state.playing || !timeline) return;
+      const { start, end } = timelineBounds(timeline);
+      const next = state.clockT + (CLOCK_TICK_MS / 1000) * state.playbackRate;
       // Loop the rehearsal rather than freezing on the last frame.
       if (next >= end) {
         set({ phaseIndex: -1 });
@@ -252,9 +331,10 @@ export const useVenueStore = create((set, get) => ({
    */
   syncFromVideo: (currentTime, duration) => {
     const state = get();
-    if (!state.syncVideo || !isTimelineScenario(state.scenario)) return;
+    const timeline = currentTimeline(state);
+    if (!state.syncVideo || !timeline) return;
     if (!Number.isFinite(duration) || duration <= 0) return;
-    const { start, end } = timelineBounds(state.scenario);
+    const { start, end } = timelineBounds(timeline);
     const ratio = Math.min(1, Math.max(0, currentTime / duration));
     get().setClock(start + ratio * (end - start));
   },
@@ -265,8 +345,7 @@ export const useVenueStore = create((set, get) => ({
     if (get().mode === 'backend') get().startPolling();
   },
 
-  setIncidentId: (incidentId) =>
-    set({ incidentId, checks: {}, acknowledged: false, answer: null }),
+  setIncidentId: (incidentId) => set({ incidentId, checks: {}, acknowledgedId: null, answer: null }),
 
   setSelectedZone: (zoneId) =>
     set((state) => ({ selectedZone: state.selectedZone === zoneId ? null : zoneId })),
@@ -286,8 +365,18 @@ export const useVenueStore = create((set, get) => ({
   /** Replays the scripted demo feed so the overlay reads like a live log. */
   replayDemoSignals: () => {
     clearSignalTimers();
-    if (get().mode !== 'demo') return;
-    const script = signalScripts[get().scenario] || [];
+    const state = get();
+    if (state.mode !== 'demo') return;
+    const timeline = currentTimeline(state);
+    const script = timeline
+      ? [
+          {
+            source: timeline.kind === 'model' ? 'Model' : 'Timeline',
+            message: `${timeline.kind === 'model' ? 'Crowd-flow model' : 'Authored timeline'} loaded: ${timeline.title}. Playback drives every count below; all of it is simulated.`,
+          },
+          { source: 'Forecast', message: 'Constant-velocity projection running at +1, +2 and +3 s.' },
+        ]
+      : signalScripts[state.scenario] || [];
     script.forEach((entry, index) => {
       signalTimers.push(
         setTimeout(() => get().pushSignal(entry.source, entry.message, 'simulated'), index * 750),
@@ -359,16 +448,16 @@ export const useVenueStore = create((set, get) => ({
 
   acknowledge: async () => {
     const state = get();
+    const incident = currentIncident(state);
+    if (!incident) return;
     if (state.mode === 'demo') {
-      set({ acknowledged: true });
+      set({ acknowledgedId: incident.incident_id });
       get().pushSignal('Operator', 'Incident acknowledged locally. Demo only; nothing was persisted.', 'simulated');
       return;
     }
-    const incident = currentIncident(state);
-    if (!incident) return;
     try {
       await api.acknowledge(incident.incident_id);
-      set({ acknowledged: true });
+      set({ acknowledgedId: incident.incident_id });
       get().pushSignal('Operator', `Acknowledged ${incident.incident_id}.`, 'observed');
     } catch (cause) {
       set({ error: cause.message });
@@ -418,6 +507,9 @@ export const useVenueStore = create((set, get) => ({
 
 export const isDemo = (state) => state.mode === 'demo';
 
+/** The active venue object. Venues are module constants, so this is identity-stable. */
+export const selectVenue = (state) => getVenue(state.venueId);
+
 /** @returns {object|null} the current camera observation, or null in demo mode. */
 export const selectObservation = (state) => (isDemo(state) ? null : state.status?.observation || null);
 
@@ -434,8 +526,9 @@ export const selectProcedure = (state) =>
 
 /** Unit flow vector in image space, or null when no direction is established. */
 export function selectFlowVector(state) {
-  if (isDemo(state)) return directionVector(scenarios[state.scenario]?.direction);
-  return directionVector(selectObservation(state)?.dominant_direction);
+  if (!isDemo(state)) return directionVector(selectObservation(state)?.dominant_direction);
+  const timeline = currentTimeline(state);
+  return directionVector(timeline ? timeline.direction : scenarios[state.scenario]?.direction);
 }
 
 // ---------------------------------------------------------------------------
@@ -443,22 +536,150 @@ export function selectFlowVector(state) {
 // ---------------------------------------------------------------------------
 
 /**
+ * @typedef {object} ForecastSlice
+ * @property {string} mode
+ * @property {string} scenario
+ * @property {string} venueId
+ * @property {object|null} status
+ * @property {number} threshold
+ * @property {number} horizon
+ * @property {number} clockT
+ */
+
+/**
+ * The forecast payload driving the 3D zone grid. Prefers a real backend
+ * forecast; otherwise returns the simulated grid tagged as such.
+ * @param {ForecastSlice} slice
+ */
+export function computeForecast(slice) {
+  const venue = getVenue(slice.venueId);
+  const observation = slice.mode === 'demo' ? null : slice.status?.observation || null;
+  if (observation?.forecast?.cells) {
+    return { ...observation.forecast, origin: 'observed' };
+  }
+  const scenario = slice.mode === 'demo' ? slice.scenario : backendScenarioKey(observation, venue);
+  const timeline = timelineFor(venue, scenario, slice.threshold, slice.horizon);
+  if (timeline) return timelineForecast(timeline, slice.clockT, slice.threshold);
+  return simulatedForecast(scenario, slice.threshold, venue);
+}
+
+/** Maps a live observation onto the closest demo scenario for the simulated grid. */
+function backendScenarioKey(observation, venue) {
+  if (!observation) return 'tracking';
+  // The backend names its demo source `demo-<scenario>`, so a timeline the
+  // server is running stays a timeline here rather than collapsing to a state.
+  const source = String(observation.source_id || '').replace(/^demo-/, '');
+  const scenario = source.includes(':') ? source.split(':')[1] : source;
+  if (isTimelineScenario(venue, scenario)) return scenario;
+  if (observation.visibility_status === 'degraded') return 'visibility';
+  if (observation.motion_state === 'CAMERA MOVEMENT SUSPECTED') return 'camera';
+  if (observation.tracking_state === 'TRACKING UNAVAILABLE') return 'tracking';
+  if (observation.tracking_state === 'INSUFFICIENT TRACK SUPPORT') return 'camera';
+  if (observation.motion_state === 'UNUSUAL COLLECTIVE MOVEMENT') return 'collective';
+  return 'clear';
+}
+
+/** One record per zone at the chosen horizon, with venue geometry attached. */
+export const computeZones = zoneRows;
+
+/**
+ * What the simulated scene is doing right now: the evidence-state fields for
+ * a single-state scenario, or fields derived from the timeline at the current
+ * clock. Everything here is simulated and the UI labels it so.
+ *
+ * @param {ForecastSlice} slice
+ * @param {ReturnType<typeof computeForecast>} forecast
+ * @returns {{title:string, count:number|null, direction:string, visibility:string, tracking:string,
+ *   motion:string, fps:number, issue:string|null, severity:string, evidence:string[], timeline:boolean,
+ *   peakDensity:number|null, peakZone:string|null}}
+ */
+export function computeScene(slice, forecast) {
+  const venue = getVenue(slice.venueId);
+  const timeline = timelineFor(venue, slice.scenario, slice.threshold, slice.horizon);
+  if (!timeline) {
+    const scene = scenarios[slice.scenario] || scenarios.clear;
+    return {
+      ...scene,
+      severity: 'caution',
+      evidence: ['Simulated scenario; no model assessment.'],
+      timeline: false,
+      peakDensity: null,
+      peakZone: null,
+    };
+  }
+
+  const sample = sampleTimeline(timeline, slice.clockT);
+  let peakIndex = 0;
+  let peakDensity = 0;
+  sample.counts.forEach((count, index) => {
+    const density = count / timeline.areas[index];
+    if (density > peakDensity) {
+      peakDensity = density;
+      peakIndex = index;
+    }
+  });
+  const peakZone = ZONE_IDS[peakIndex];
+  const counterflow = sample.counterflow;
+  const flagged = forecast.cells?.some((cell) => cell.concentration_flag) ?? false;
+  const kind = timeline.kind === 'model' ? 'crowd-flow model' : 'authored timeline';
+
+  let issue = null;
+  let severity = 'caution';
+  if (peakDensity >= CRITICAL_DENSITY) {
+    issue = `Critical density at ${peakZone} — verify`;
+    severity = 'high';
+  } else if (peakDensity >= CRUSH_RISK_DENSITY) {
+    issue = `Crush-risk density at ${peakZone} — verify`;
+    severity = 'high';
+  } else if (counterflow >= COUNTERFLOW_ALERT) {
+    issue = 'Unusual collective movement — verify';
+    severity = 'medium';
+  } else if (flagged) {
+    issue = `Concentration building at ${peakZone}`;
+  }
+
+  return {
+    title: timeline.title,
+    count: timelineHeads(forecast),
+    direction: timeline.direction,
+    visibility: 'Reference-like',
+    tracking: 'TRACK MOTION AVAILABLE',
+    motion: counterflow >= COUNTERFLOW_ALERT ? 'UNUSUAL COLLECTIVE MOVEMENT' : 'OBSERVED MOTION',
+    // Processing slows as the detector works harder on a packed frame.
+    fps: Math.round((17.2 - 6 * Math.min(1, peakDensity / 6)) * 10) / 10,
+    issue,
+    severity,
+    evidence: [
+      `Simulated ${kind}; no model assessment of any real venue.`,
+      `Peak simulated density ${peakDensity.toFixed(2)} persons/m² in ${peakZone} at ${formatClock(slice.clockT)}; ${Math.round(
+        counterflow * 100,
+      )}% of the crowd moving against the main direction.`,
+    ],
+    timeline: true,
+    peakDensity,
+    peakZone,
+  };
+}
+
+/**
  * Incidents for the current mode. Demo incidents are synthesised from the
  * selected scenario and are never presented as backend findings.
- * @param {{mode:string, scenario:string, snapshot:object|null, acknowledged:boolean}} slice
+ * @param {ForecastSlice & {snapshot:object|null, acknowledgedId:string|null}} slice
  */
 export function computeIncidents(slice) {
   if (slice.mode !== 'demo') return slice.snapshot?.incidents || [];
-  const scene = scenarios[slice.scenario];
-  if (!scene?.issue) return [];
+  const scene = computeScene(slice, computeForecast(slice));
+  if (!scene.issue) return [];
+  const kind = scene.issue.toLowerCase().split(' ')[0];
+  const incidentId = `DEMO-${slice.venueId}-${slice.scenario}-${kind}`;
   return [
     {
-      incident_id: `DEMO-${slice.scenario}`,
+      incident_id: incidentId,
       title: scene.issue,
-      severity: 'caution',
-      status: slice.acknowledged ? 'acknowledged' : 'active',
+      severity: scene.severity,
+      status: slice.acknowledgedId === incidentId ? 'acknowledged' : 'active',
       sop_id: sampleSop.sop_id,
-      evidence: ['Simulated scenario; no model assessment.'],
+      evidence: scene.evidence,
     },
   ];
 }
@@ -470,58 +691,26 @@ function currentIncident(state) {
 }
 
 /**
- * The forecast payload driving the 3D zone grid. Prefers a real backend
- * forecast; otherwise returns the simulated grid tagged as such.
- * @param {{mode:string, scenario:string, status:object|null, threshold:number, clockT:number}} slice
- */
-export function computeForecast(slice) {
-  const observation = slice.mode === 'demo' ? null : slice.status?.observation || null;
-  if (observation?.forecast?.cells) {
-    return { ...observation.forecast, origin: 'observed' };
-  }
-  const scenario = slice.mode === 'demo' ? slice.scenario : backendScenarioKey(observation);
-  if (isTimelineScenario(scenario)) {
-    return timelineForecast(scenario, slice.clockT, slice.threshold);
-  }
-  return simulatedForecast(scenario, slice.threshold);
-}
-
-/** Maps a live observation onto the closest demo scenario for the simulated grid. */
-function backendScenarioKey(observation) {
-  if (!observation) return 'tracking';
-  // The backend names its demo source `demo-<scenario>`, so a timeline the
-  // server is running stays a timeline here rather than collapsing to a state.
-  const source = String(observation.source_id || '').replace(/^demo-/, '');
-  if (isTimelineScenario(source)) return source;
-  if (observation.visibility_status === 'degraded') return 'visibility';
-  if (observation.motion_state === 'CAMERA MOVEMENT SUSPECTED') return 'camera';
-  if (observation.tracking_state === 'TRACKING UNAVAILABLE') return 'tracking';
-  if (observation.tracking_state === 'INSUFFICIENT TRACK SUPPORT') return 'camera';
-  if (observation.motion_state === 'UNUSUAL COLLECTIVE MOVEMENT') return 'collective';
-  return 'clear';
-}
-
-export const computeZones = zoneRows;
-
-/**
  * The six headline metrics, each paired with its provenance.
- * @param {{mode:string, scenario:string, status:object|null}} slice
+ * @param {ForecastSlice} slice
  * @param {{status:string, origin:string}} forecast
  */
 export function computeMetrics(slice, forecast) {
   const demo = slice.mode === 'demo';
-  const scene = scenarios[slice.scenario];
   const observation = demo ? null : slice.status?.observation || null;
   const source = demo ? 'simulated' : observation ? 'observed' : 'missing';
 
   const rows = demo
-    ? [
-        ['Detected heads', scene.timeline ? timelineHeads(forecast) : scene.count],
-        ['Tracking support', scene.tracking],
-        ['Visibility', scene.visibility],
-        ['Image motion', scene.direction],
-        ['Processing FPS', scene.fps],
-      ]
+    ? (() => {
+        const scene = computeScene(slice, forecast);
+        return [
+          ['Detected heads', scene.count],
+          ['Tracking support', scene.tracking],
+          ['Visibility', scene.visibility],
+          ['Image motion', scene.direction],
+          ['Processing FPS', scene.fps],
+        ];
+      })()
     : [
         ['Detected heads', observation?.detected_heads],
         ['Tracking support', observation?.tracking_state],

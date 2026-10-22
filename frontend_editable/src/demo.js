@@ -1,5 +1,7 @@
-// Explicitly simulated scenarios. Nothing here is a model result; the UI must
-// keep labelling it SIMULATED wherever it is displayed.
+// Explicitly simulated evidence states. Nothing here is a model result; the
+// UI must keep labelling it SIMULATED wherever it is displayed. The timeline
+// scenarios (egress surge, crush, the historic reconstructions) live with
+// their venues in ./data/venues and are described from there.
 
 export const scenarios = {
   clear: {
@@ -52,31 +54,6 @@ export const scenarios = {
     fps: 9.8,
     issue: 'Unusual collective movement — verify',
   },
-  // The two timeline scenarios below play out over several minutes rather than
-  // holding one state. Their counts, direction and FPS are recomputed from the
-  // timeline on every tick, so the fields here are only the opening frame.
-  surge: {
-    title: 'Egress surge — concourse congests',
-    count: null,
-    direction: 'South · toward the gate line',
-    visibility: 'Reference-like',
-    tracking: 'TRACK MOTION AVAILABLE',
-    motion: 'OBSERVED MOTION',
-    fps: 17.2,
-    issue: 'Concentration building at the exit funnel',
-    timeline: true,
-  },
-  crush: {
-    title: 'Crush conditions — gates lost during egress',
-    count: null,
-    direction: 'South with counterflow · image space',
-    visibility: 'Reference-like',
-    tracking: 'TRACK MOTION AVAILABLE',
-    motion: 'UNUSUAL COLLECTIVE MOVEMENT',
-    fps: 11.6,
-    issue: 'Crush-risk density at the exit funnel — verify',
-    timeline: true,
-  },
 };
 
 export const sampleSop = {
@@ -102,8 +79,10 @@ export const sampleSop = {
 };
 
 /**
- * Scripted signal feed shown in the twin overlay. Ordered oldest → newest;
- * the store replays them on a timer so the panel reads like a live log.
+ * Scripted signal feed shown in the twin overlay for the evidence states.
+ * Ordered oldest → newest; the store replays them on a timer so the panel
+ * reads like a live log. Timeline scenarios announce themselves from their
+ * own phases instead.
  */
 export const signalScripts = {
   clear: [
@@ -136,41 +115,5 @@ export const signalScripts = {
     { source: 'Tracker', message: 'Sustained direction reversal across 3 consecutive windows.' },
     { source: 'Flow', message: 'Net flow and track motion agree on reversal. Camera motion not suspected.' },
     { source: 'Forecast', message: 'R3C2 projected above the configured threshold at +2 s. Operator review required.' },
-  ],
-  surge: [
-    { source: 'Timeline', message: 'Simulated egress timeline loaded. Playback drives every count below.' },
-    { source: 'Forecast', message: 'Constant-velocity projection running at +1, +2 and +3 s.' },
-  ],
-  crush: [
-    { source: 'Timeline', message: 'Simulated egress timeline with two gates lost at T-01:30.' },
-    { source: 'Forecast', message: 'Constant-velocity projection running at +1, +2 and +3 s.' },
-  ],
-};
-
-/**
- * One line per timeline keyframe, pushed to the signal feed as playback
- * crosses that phase. Indices match the keyframes in `data/crowdTimeline.js`.
- */
-export const phaseSignals = {
-  surge: [
-    { source: 'Tracker', message: 'Stands populated, concourses light. 82% of detections held as continuous tracks.' },
-    { source: 'Flow', message: 'Net track direction turning south toward the gate line.' },
-    { source: 'Forecast', message: 'Central concourse and exit funnel rising together across consecutive windows.' },
-    { source: 'Forecast', message: 'Exit funnel arrivals exceeding gate throughput in the projection.' },
-    { source: 'Tracker', message: 'Slow fraction rising in R3C2. Walking speed dropping, not stopping.' },
-    { source: 'Forecast', message: 'R3C2 in the congested band. Inspect gate throughput before the queue deepens.' },
-    { source: 'Flow', message: 'Arrival rate now below throughput. Projected change turning negative.' },
-    { source: 'Forecast', message: 'Densities returning toward free movement. This is not an all-clear.' },
-  ],
-  crush: [
-    { source: 'Tracker', message: 'Stands populated, concourses light. 82% of detections held as continuous tracks.' },
-    { source: 'Flow', message: 'Net track direction turning south toward the gate line.' },
-    { source: 'Forecast', message: 'Concourses loading at the rate the surge scenario shows.' },
-    { source: 'Timeline', message: 'Simulated loss of two of six gates. Throughput falls; arrivals do not.' },
-    { source: 'Forecast', message: 'R3C2 past the congested band with inflow unchanged. Operator review required.' },
-    { source: 'Forecast', message: 'R3C2 in the crush-risk band. Movement is involuntary at this density.' },
-    { source: 'Tracker', message: 'Counterflow at the queue front. Track coverage falling as heads occlude.' },
-    { source: 'Forecast', message: 'R3C2 in the critical band. Counts here are least reliable exactly when they matter most.' },
-    { source: 'Forecast', message: 'Condition persisting. Nothing in this console resolves it.' },
   ],
 };

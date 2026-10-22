@@ -1,199 +1,177 @@
 // Time-evolving crowd scenarios for the digital twin.
 //
-// Everything in this file is an explicitly authored simulation. It is not a
-// model output, not a replay of a real incident, and not a prediction. Its
-// purpose is to let an operator rehearse what the console looks like while a
-// concourse fills, congests and reaches the densities associated with crowd
-// crush — and to show how much warning the +1/+2/+3 s projection gives.
+// Everything in this file is an explicitly authored or simulated sequence. It
+// is not a model output of the backend, not a replay of a real incident, and
+// not a prediction. Its purpose is to let an operator rehearse what the
+// console looks like while a space fills, congests and reaches the densities
+// associated with crowd crush — and to show how much warning the +1/+2/+3 s
+// projection gives, and what acting on that warning changes.
+//
+// Two kinds of timeline exist:
+//   * authored — hand-written keyframes (the generic plaza's surge and crush);
+//   * model    — produced by the cell-transmission crowd model in
+//                ../lib/crowdModel.js from a venue's authored parameters. The
+//                historic reconstructions use this kind, and each has a
+//                counterfactual branch in which an operator acts on the
+//                projection's warning after a stated reaction time.
 
-import { ZONE_AREA_M2, ZONE_IDS, ZONES, slowFractionFor } from './venueModel';
+import { runModel, summarise } from '../lib/crowdModel.js';
+import { ZONE_IDS, layoutZones, slowFractionFor } from './venueModel.js';
 
-// Keyframes are ordered by `t`, seconds relative to T0 — the moment the
-// scenario's headline condition is reached. `counts` are people standing in
-// each zone, in ZONE_IDS order (R1C1 … R3C3). `counterflow` is the simulated
-// fraction of the crowd moving against the egress direction, which is the
-// collective-movement signature the incident engine already recognises.
-
-/** Normal end-of-event egress that congests at the main exit funnel. */
-const SURGE_KEYFRAMES = [
-  {
-    t: -300,
-    label: 'Event running',
-    note: 'Stands occupied, concourses light.',
-    counts: [210, 120, 205, 90, 120, 95, 60, 70, 62],
-    counterflow: 0.02,
-  },
-  {
-    t: -180,
-    label: 'Early leavers',
-    note: 'Arrivals at the concourses begin to exceed gate throughput.',
-    counts: [180, 150, 175, 130, 185, 135, 95, 130, 98],
-    counterflow: 0.03,
-  },
-  {
-    t: -120,
-    label: 'Stands emptying',
-    note: 'North gate approach and central concourse filling together.',
-    counts: [120, 190, 118, 175, 260, 180, 140, 230, 145],
-    counterflow: 0.04,
-  },
-  {
-    t: -60,
-    label: 'Funnel loading',
-    note: 'Six gates at capacity; arrivals still rising.',
-    counts: [70, 210, 68, 205, 330, 210, 190, 350, 195],
-    counterflow: 0.06,
-  },
-  {
-    t: -30,
-    label: 'Queue backing up',
-    note: 'Walking speed dropping across the exit funnel.',
-    counts: [45, 205, 44, 215, 365, 222, 215, 430, 220],
-    counterflow: 0.09,
-  },
-  {
-    t: 0,
-    label: 'Funnel congested',
-    note: 'Exit funnel in the congested band; movement is shuffling.',
-    counts: [30, 190, 30, 210, 380, 215, 230, 470, 235],
-    counterflow: 0.11,
-  },
-  {
-    t: 60,
-    label: 'Gates clearing',
-    note: 'Arrival rate falls below throughput; the queue starts to drain.',
-    counts: [20, 150, 20, 180, 330, 185, 215, 445, 220],
-    counterflow: 0.07,
-  },
-  {
-    t: 180,
-    label: 'Recovering',
-    note: 'Densities returning toward free movement.',
-    counts: [12, 90, 12, 120, 220, 125, 150, 300, 155],
-    counterflow: 0.03,
-  },
-];
-
-/** The same egress with two gates lost, driving the funnel into crush densities. */
-const CRUSH_KEYFRAMES = [
-  {
-    t: -300,
-    label: 'Event running',
-    note: 'Identical opening conditions to the surge scenario.',
-    counts: [210, 120, 205, 90, 120, 95, 60, 70, 62],
-    counterflow: 0.02,
-  },
-  {
-    t: -180,
-    label: 'Early leavers',
-    note: 'Egress begins on schedule.',
-    counts: [180, 150, 175, 130, 185, 138, 98, 135, 100],
-    counterflow: 0.03,
-  },
-  {
-    t: -120,
-    label: 'Stands emptying',
-    note: 'Concourses loading normally.',
-    counts: [125, 195, 122, 180, 270, 186, 145, 245, 150],
-    counterflow: 0.05,
-  },
-  {
-    t: -90,
-    label: 'Two gates stop',
-    note: 'Simulated loss of two of six gates. Throughput falls; arrivals do not.',
-    counts: [95, 215, 92, 205, 320, 212, 175, 330, 180],
-    counterflow: 0.08,
-  },
-  {
-    t: -60,
-    label: 'Funnel overloading',
-    note: 'Exit funnel past the congested band with inflow unchanged.',
-    counts: [70, 225, 68, 230, 375, 236, 205, 445, 210],
-    counterflow: 0.14,
-  },
-  {
-    t: -30,
-    label: 'Crush-risk density',
-    note: 'Involuntary contact; individuals no longer choose their own path.',
-    counts: [52, 230, 50, 250, 425, 255, 230, 570, 235],
-    counterflow: 0.24,
-  },
-  {
-    t: 0,
-    label: 'Progressive compression',
-    note: 'Counterflow at the front of the queue meets continued inflow behind it.',
-    counts: [40, 225, 40, 262, 455, 266, 246, 690, 250],
-    counterflow: 0.38,
-  },
-  {
-    t: 30,
-    label: 'Critical density',
-    note: 'Densities in the band associated with crowd-collapse incidents.',
-    counts: [36, 220, 36, 268, 470, 272, 252, 745, 256],
-    counterflow: 0.46,
-  },
-  {
-    t: 120,
-    label: 'Held',
-    note: 'Condition persisting. Nothing in this console resolves it.',
-    counts: [34, 215, 34, 265, 465, 268, 250, 730, 254],
-    counterflow: 0.42,
-  },
-];
+/** @param {object} venue @param {string} scenario */
+export function isTimelineScenario(venue, scenario) {
+  return Boolean(venue?.timelines && Object.prototype.hasOwnProperty.call(venue.timelines, scenario));
+}
 
 /**
  * @typedef {object} Timeline
- * @property {string} id
+ * @property {string} id            scenario id within the venue
+ * @property {string} venueId
  * @property {string} title
  * @property {string} summary
- * @property {number} threshold default concentration threshold, in projected tracks
- * @property {[number, number]} thresholdRange slider bounds for that threshold
- * @property {number} onsetDensity persons/m² this scenario's headline condition begins at
- * @property {string} onsetLabel what that density is called
- * @property {object[]} keyframes
+ * @property {'authored'|'model'} kind
+ * @property {number} threshold     default concentration threshold, projected tracks
+ * @property {[number, number]} thresholdRange slider bounds
+ * @property {number} onsetDensity  persons/m² the headline condition begins at
+ * @property {string} onsetLabel
+ * @property {'egress'|'crush'} mood scene lighting
+ * @property {string} direction     dominant direction text, image-space wording
+ * @property {number[]} areas       m² per cell, ZONE_IDS order
+ * @property {Array<{t:number, counts:number[], counterflow:number, outside?:number}>} keyframes
+ * @property {Array<{t:number, label:string, note:string, signal?:{source:string,message:string}}>} phases
+ * @property {null|{at:number|null, warnAt:number|null, reactionSeconds:number, title:string,
+ *   note:string, actions:string[]}} intervention
+ * @property {object} stats         summarise() of this timeline
+ * @property {object|null} baseline summarise() of the branch this diverged from
  */
 
-/** @type {Record<string, Timeline>} */
-export const TIMELINES = {
-  surge: {
-    id: 'surge',
-    title: 'Egress surge — concourse congests',
-    summary:
-      'End-of-event egress in which arrivals at the main exit funnel exceed gate throughput. ' +
-      'The funnel reaches the congested band and then drains.',
-    // Set well below the congested band so the projection has somewhere to
-    // warn from: a threshold placed at the dangerous density warns on arrival.
-    threshold: 240,
-    thresholdRange: [60, 900],
-    onsetDensity: 2.0,
-    onsetLabel: 'congested movement',
-    keyframes: SURGE_KEYFRAMES,
-  },
-  crush: {
-    id: 'crush',
-    title: 'Crush conditions — gates lost during egress',
-    summary:
-      'The same egress with two of six gates lost. Inflow continues, the funnel passes the ' +
-      'crush-risk band, and counterflow appears at the front of the queue.',
-    threshold: 300,
-    thresholdRange: [60, 900],
-    onsetDensity: 3.5,
-    onsetLabel: 'involuntary movement at crush-risk density',
-    keyframes: CRUSH_KEYFRAMES,
-  },
-};
+const cache = new Map();
 
-export const TIMELINE_IDS = Object.keys(TIMELINES);
-
-/** @param {string} scenario @returns {boolean} */
-export function isTimelineScenario(scenario) {
-  return Object.prototype.hasOwnProperty.call(TIMELINES, scenario);
+/**
+ * Resolve a venue scenario to a built timeline. Branches that act on the
+ * projection's warning depend on the operator's threshold and horizon, so
+ * those are part of the cache key; everything else is built once.
+ *
+ * @param {object} venue
+ * @param {string} scenario
+ * @param {number} threshold
+ * @param {number} horizon
+ * @returns {Timeline|null}
+ */
+export function getTimeline(venue, scenario, threshold, horizon) {
+  const spec = venue?.timelines?.[scenario];
+  if (!spec) return null;
+  const key = spec.branchOf ? `${venue.id}|${scenario}|${threshold}|${horizon}` : `${venue.id}|${scenario}`;
+  if (cache.has(key)) return cache.get(key);
+  const built = build(venue, spec, threshold, horizon);
+  cache.set(key, built);
+  return built;
 }
 
-/** @param {string} scenario @returns {{start:number, end:number}} */
-export function timelineBounds(scenario) {
-  const frames = TIMELINES[scenario].keyframes;
+function build(venue, spec, threshold, horizon) {
+  const areas = layoutZones(venue).map((zone) => zone.area);
+  const common = {
+    id: spec.id,
+    venueId: venue.id,
+    title: spec.title,
+    summary: spec.summary,
+    kind: spec.kind,
+    threshold: spec.threshold,
+    thresholdRange: spec.thresholdRange,
+    onsetDensity: spec.onsetDensity,
+    onsetLabel: spec.onsetLabel,
+    mood: spec.mood || 'egress',
+    direction: spec.direction || 'South · image space',
+    areas,
+    intervention: null,
+    baseline: null,
+  };
+
+  if (spec.kind === 'authored') {
+    const keyframes = spec.keyframes;
+    return {
+      ...common,
+      keyframes,
+      phases: keyframes.map(({ t, label, note, signal }) => ({ t, label, note, signal })),
+      stats: summarise(keyframes, { areas, ids: ZONE_IDS }),
+    };
+  }
+
+  // A branch names the timeline whose model it reuses rather than repeating it.
+  const source = typeof spec.model === 'string' ? venue.timelines[spec.model].model : spec.model;
+  const row = (id) => id.charAt(1);
+  const model = {
+    ids: ZONE_IDS,
+    areas,
+    lengths: areas.map(() => venue.cell.depth),
+    ...source,
+    // Moving to a neighbouring column crosses the cell's width; to a
+    // neighbouring row, its depth. A link may still state its own length.
+    links: source.links.map((link) => ({
+      ...link,
+      length: link.length ?? (row(link.from) === row(link.to) ? venue.cell.width : venue.cell.depth),
+    })),
+  };
+
+  if (!spec.branchOf) {
+    const run = runModel(model);
+    return { ...common, keyframes: run.keyframes, phases: spec.phases, stats: run.stats };
+  }
+
+  // A counterfactual: the same model, with the operator acting a fixed
+  // reaction time after the projection first crosses the threshold.
+  const parent = getTimeline(venue, spec.branchOf, threshold, horizon);
+  const lead = timelineLeadTime(parent, threshold, horizon);
+  const plan = spec.intervention;
+  const at = lead.warnAt == null ? null : lead.warnAt + plan.reactionSeconds;
+  const run = runModel(model, { at, actions: at == null ? [] : plan.actions });
+
+  const phases = [
+    ...parent.phases.filter((phase) => at == null || phase.t < at),
+    ...(at == null
+      ? [
+          {
+            t: parent.phases[0]?.t ?? model.start,
+            label: 'No warning at this threshold',
+            note: 'The projection never crosses the configured threshold, so there is nothing for an operator to act on and this branch is identical to the reconstruction.',
+          },
+        ]
+      : plan.phases.map((phase) => ({ ...phase, t: at + phase.dt }))),
+  ].sort((a, b) => a.t - b.t);
+
+  return {
+    ...common,
+    keyframes: run.keyframes,
+    phases,
+    stats: run.stats,
+    baseline: parent.stats,
+    intervention: {
+      at,
+      warnAt: lead.warnAt,
+      reactionSeconds: plan.reactionSeconds,
+      title: plan.title,
+      note: plan.note,
+      actions: plan.actions.map((action) => action.label),
+    },
+  };
+}
+
+/** @param {Timeline} timeline @returns {{start:number, end:number}} */
+export function timelineBounds(timeline) {
+  const frames = timeline.keyframes;
   return { start: frames[0].t, end: frames[frames.length - 1].t };
+}
+
+/** Index of the last keyframe at or before `t`, never the final one. */
+function frameIndex(frames, t) {
+  let low = 0;
+  let high = frames.length - 2;
+  while (low < high) {
+    const mid = (low + high + 1) >> 1;
+    if (frames[mid].t <= t) low = mid;
+    else high = mid - 1;
+  }
+  return Math.max(0, low);
 }
 
 /**
@@ -204,44 +182,50 @@ export function timelineBounds(scenario) {
  * projection built from it behaves the way the Python baseline does on real
  * tracks: it carries the current trend forward and nothing else.
  *
- * @param {string} scenario
+ * @param {Timeline} timeline
  * @param {number} t seconds relative to T0
- * @returns {{counts:number[], rates:number[], counterflow:number, phase:object, phaseIndex:number}}
+ * @returns {{counts:number[], rates:number[], counterflow:number, outside:number,
+ *   phase:object, phaseIndex:number}}
  */
-export function sampleTimeline(scenario, t) {
-  const frames = TIMELINES[scenario].keyframes;
+export function sampleTimeline(timeline, t) {
+  const frames = timeline.keyframes;
   const clamped = clamp(t, frames[0].t, frames[frames.length - 1].t);
-
-  let index = 0;
-  while (index < frames.length - 2 && frames[index + 1].t <= clamped) index += 1;
-
+  const index = frameIndex(frames, clamped);
   const from = frames[index];
-  const to = frames[index + 1];
+  const to = frames[Math.min(index + 1, frames.length - 1)];
   const span = to.t - from.t;
   const ratio = span > 0 ? (clamped - from.t) / span : 0;
+
+  let phaseIndex = 0;
+  for (let i = 0; i < timeline.phases.length; i += 1) {
+    if (timeline.phases[i].t <= clamped) phaseIndex = i;
+    else break;
+  }
 
   return {
     counts: from.counts.map((value, i) => Math.round(value + (to.counts[i] - value) * ratio)),
     rates: from.counts.map((value, i) => (span > 0 ? (to.counts[i] - value) / span : 0)),
     counterflow: from.counterflow + (to.counterflow - from.counterflow) * ratio,
-    phase: from,
-    phaseIndex: index,
+    outside: Math.round((from.outside || 0) + ((to.outside || 0) - (from.outside || 0)) * ratio),
+    phase: timeline.phases[phaseIndex],
+    phaseIndex,
   };
 }
 
 /**
- * Build a forecast payload for a timeline scenario, shaped exactly like
+ * Build a forecast payload for a timeline at time `t`, shaped exactly like
  * `CrowdForecast.update()` so the console renders it through the same path a
  * real backend forecast takes.
  *
- * @param {string} scenario
+ * @param {Timeline} timeline
  * @param {number} t seconds relative to T0
  * @param {number} threshold concentration threshold in projected tracks
  * @returns {object} forecast payload tagged `origin: 'simulated'`
  */
-export function timelineForecast(scenario, t, threshold) {
-  const { counts, rates, counterflow, phase } = sampleTimeline(scenario, t);
-  const peakDensity = Math.max(...counts) / ZONE_AREA_M2;
+export function timelineForecast(timeline, t, threshold) {
+  const { counts, rates, counterflow, outside, phase } = sampleTimeline(timeline, t);
+  const { areas } = timeline;
+  const peakDensity = Math.max(...counts.map((count, i) => count / areas[i]));
 
   // Tracking degrades as the crowd packs: heads occlude one another, so fewer
   // detections survive as continuous tracks. Real trackers fail in the same
@@ -252,7 +236,7 @@ export function timelineForecast(scenario, t, threshold) {
   for (const horizon of [1, 2, 3]) {
     for (let i = 0; i < counts.length; i += 1) {
       const projected = Math.max(0, Math.round(counts[i] + rates[i] * horizon));
-      const density = projected / ZONE_AREA_M2;
+      const density = projected / areas[i];
       cells.push({
         cell: ZONE_IDS[i],
         horizon_s: horizon,
@@ -275,17 +259,22 @@ export function timelineForecast(scenario, t, threshold) {
           : best,
       )
     : null;
+  const peakArea = peak ? areas[ZONE_IDS.indexOf(peak.cell)] : null;
 
   return {
     status: flagged.length ? 'REVIEW CONCENTRATION' : 'PROJECTION AVAILABLE',
-    reason: 'Constant-velocity projection of a simulated egress timeline.',
+    reason:
+      timeline.kind === 'model'
+        ? 'Constant-velocity projection of a simulated crowd-flow model.'
+        : 'Constant-velocity projection of a simulated egress timeline.',
     coverage: round2(coverage),
     counterflow: round2(counterflow),
+    outside,
     cells,
     advice: peak
       ? `Inspect ${peak.cell}: ${peak.projected_tracks} eligible tracks projected at +${peak.horizon_s} s, ` +
-        `about ${round2(peak.projected_tracks / ZONE_AREA_M2)} persons/m² over the simulated ${ZONE_AREA_M2} m² ` +
-        'zone. Check gate throughput and hold inbound before the funnel loads further. This is a simulated ' +
+        `about ${round2(peak.projected_tracks / peakArea)} persons/m² over the simulated ${Math.round(peakArea)} m² ` +
+        'zone. Check throughput at the exit and hold inbound before the space loads further. This is a simulated ' +
         'timeline, not a prediction, and it does not establish that any route is safe.'
       : `Phase: ${phase.label}. No configured concentration threshold exceeded in this projection. ` +
         'This is not an all-clear.',
@@ -298,24 +287,24 @@ export function timelineForecast(scenario, t, threshold) {
  * +horizon projection crosses the threshold, against the first time the crowd
  * actually reaches the onset density.
  *
- * @param {string} scenario
+ * @param {Timeline} timeline
  * @param {number} threshold projected tracks
  * @param {number} horizon 1, 2 or 3 seconds
  * @returns {{warnAt:number|null, onsetAt:number|null, leadSeconds:number|null,
  *   onsetDensity:number, onsetLabel:string}}
  */
-export function timelineLeadTime(scenario, threshold, horizon) {
-  const { onsetDensity, onsetLabel } = TIMELINES[scenario];
-  const { start, end } = timelineBounds(scenario);
+export function timelineLeadTime(timeline, threshold, horizon) {
+  const { onsetDensity, onsetLabel, areas } = timeline;
+  const { start, end } = timelineBounds(timeline);
   let warnAt = null;
   let onsetAt = null;
 
   for (let t = start; t <= end; t += 1) {
-    const { counts, rates } = sampleTimeline(scenario, t);
+    const { counts, rates } = sampleTimeline(timeline, t);
     if (warnAt === null && counts.some((count, i) => count + rates[i] * horizon >= threshold)) {
       warnAt = t;
     }
-    if (onsetAt === null && Math.max(...counts) / ZONE_AREA_M2 >= onsetDensity) onsetAt = t;
+    if (onsetAt === null && counts.some((count, i) => count / areas[i] >= onsetDensity)) onsetAt = t;
     if (warnAt !== null && onsetAt !== null) break;
   }
 
@@ -328,27 +317,6 @@ export function timelineLeadTime(scenario, threshold, horizon) {
   };
 }
 
-/**
- * Unit direction each zone's crowd walks during an egress, in twin world
- * space: toward the main exit funnel, then south through the gate line.
- * @type {Record<string, [number, number]>}
- */
-export const EGRESS_FIELD = (() => {
-  const funnel = ZONES.find((zone) => zone.id === 'R3C2');
-  const field = {};
-  for (const zone of ZONES) {
-    if (zone.id === 'R3C2') {
-      field[zone.id] = [0, 1]; // straight out through the gate line
-      continue;
-    }
-    const dx = funnel.x - zone.x;
-    const dz = funnel.z - zone.z;
-    const length = Math.hypot(dx, dz) || 1;
-    field[zone.id] = [dx / length, dz / length];
-  }
-  return field;
-})();
-
 /** Formats a timeline clock as an operator-readable offset, e.g. `T-01:30`. */
 export function formatClock(t) {
   const sign = t < 0 ? '-' : '+';
@@ -356,6 +324,12 @@ export function formatClock(t) {
   const minutes = String(Math.floor(total / 60)).padStart(2, '0');
   const seconds = String(total % 60).padStart(2, '0');
   return `T${sign}${minutes}:${seconds}`;
+}
+
+/** Formats seconds as `m:ss` for durations rather than clock offsets. */
+export function formatDuration(seconds) {
+  const total = Math.max(0, Math.round(seconds));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 }
 
 function clamp(value, low, high) {

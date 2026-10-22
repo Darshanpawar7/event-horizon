@@ -1,28 +1,38 @@
-// Static venue geometry for the digital twin, plus the explicitly simulated
-// zone grid used when the backend supplies no forecast.
+// Grid conventions for the digital twin, plus the explicitly simulated zone
+// grid used when the backend supplies no forecast.
 //
 // Zone naming follows crowd_forecast.py exactly: R{row}C{col}, rows top to
-// bottom and columns left to right within the analysed region.
+// bottom and columns left to right within the analysed region. Everything
+// that depends on a venue's real-world geometry — cell size, floor area,
+// labels, gates, cameras — is read from the active venue (see ./venues) rather
+// than hard-coded here, so the same console can stand over a plaza, a railway
+// platform or a three-metre alley.
 
 export const GRID_SIZE = 3;
-export const ZONE_SPAN = 12; // world units per zone edge
-export const ZONE_GAP = 2.4; // walkway width between zones
-const PITCH = ZONE_SPAN + ZONE_GAP;
+
+/** @type {string[]} R1C1 … R3C3 in reading order. */
+export const ZONE_IDS = Array.from(
+  { length: GRID_SIZE * GRID_SIZE },
+  (_, index) => `R${Math.floor(index / GRID_SIZE) + 1}C${(index % GRID_SIZE) + 1}`,
+);
 
 /**
- * One world unit is one metre in the twin, so a zone tile stands in for this
- * much floor area. Every persons-per-square-metre figure in the console is
- * derived from it, and is therefore a property of the *simulated* venue — the
- * backend reports track counts in image cells and makes no area claim at all.
+ * The generic plaza cell, in square metres. The five evidence-state scenarios
+ * were authored against it; on any other venue their populations and
+ * thresholds are scaled by floor area so the densities stay the same.
  */
-export const ZONE_AREA_M2 = ZONE_SPAN * ZONE_SPAN;
+export const REFERENCE_CELL_AREA = 144;
 
 /** Reference density (persons/m²) at which walking speed collapses to a shuffle. */
 export const JAM_DENSITY = 5.4;
 
-/** @param {number|null} count people in one zone @returns {number|null} persons/m² */
-export function densityOf(count) {
-  return count == null || !Number.isFinite(count) ? null : count / ZONE_AREA_M2;
+/**
+ * @param {number|null} count people in one zone
+ * @param {number} area floor area of that zone in m²
+ * @returns {number|null} persons/m²
+ */
+export function densityOf(count, area) {
+  return count == null || !Number.isFinite(count) || !(area > 0) ? null : count / area;
 }
 
 /**
@@ -39,78 +49,6 @@ export function speedFactor(density) {
 export function slowFractionFor(density) {
   return Math.round(Math.min(0.97, Math.max(0.05, (density - 0.6) / 3.4)) * 100) / 100;
 }
-
-/** @typedef {{id:string, row:number, col:number, x:number, z:number}} ZoneCell */
-
-/** @type {ZoneCell[]} */
-export const ZONES = Array.from({ length: GRID_SIZE * GRID_SIZE }, (_, index) => {
-  const row = Math.floor(index / GRID_SIZE);
-  const col = index % GRID_SIZE;
-  return {
-    id: `R${row + 1}C${col + 1}`,
-    row: row + 1,
-    col: col + 1,
-    x: (col - 1) * PITCH,
-    z: (row - 1) * PITCH,
-  };
-});
-
-export const ZONE_IDS = ZONES.map((zone) => zone.id);
-
-/** Human-readable venue names so operators are not reading matrix indices alone. */
-export const ZONE_LABELS = {
-  R1C1: 'North-west stand',
-  R1C2: 'North gate approach',
-  R1C3: 'North-east stand',
-  R2C1: 'West concourse',
-  R2C2: 'Central concourse',
-  R2C3: 'East concourse',
-  R3C1: 'South-west ramp',
-  R3C2: 'Main exit funnel',
-  R3C3: 'South-east ramp',
-};
-
-/** Camera masts. `covers` lists the zones inside each mast's field of view. */
-export const CAMERA_MASTS = [
-  { id: 'camera-1', label: 'CAM 01', x: -PITCH, z: PITCH + 11, rotation: 0, covers: ['R3C1', 'R3C2', 'R2C1'] },
-  { id: 'camera-2', label: 'CAM 02', x: PITCH, z: PITCH + 11, rotation: 0, covers: ['R3C3', 'R3C2', 'R2C3'] },
-  { id: 'camera-3', label: 'CAM 03', x: -PITCH - 11, z: -PITCH, rotation: Math.PI / 2, covers: ['R1C1', 'R2C1'] },
-  { id: 'camera-4', label: 'CAM 04', x: PITCH + 11, z: -PITCH, rotation: -Math.PI / 2, covers: ['R1C3', 'R2C3'] },
-];
-
-/** Egress gates along the south edge; `zone` is the zone that feeds each gate. */
-export const EXIT_GATES = Array.from({ length: 6 }, (_, index) => ({
-  id: `GATE-${String(index + 1).padStart(2, '0')}`,
-  x: (index - 2.5) * 6.4,
-  zone: index < 2 ? 'R3C1' : index < 4 ? 'R3C2' : 'R3C3',
-}));
-
-/** Perimeter structures (stands, stalls, service blocks) that frame the plaza. */
-export const STRUCTURES = (() => {
-  const blocks = [];
-  const edge = PITCH + 9.5;
-  let serial = 0;
-  for (let i = -3; i <= 3; i += 1) {
-    if (Math.abs(i) < 1) continue;
-    blocks.push({ id: `S-${serial += 1}`, x: i * 5.6, z: -edge, scale: 1 + (Math.abs(i) % 2) * 0.25 });
-    blocks.push({ id: `S-${serial += 1}`, x: -edge, z: i * 5.6, scale: 1 + ((Math.abs(i) + 1) % 2) * 0.25 });
-    blocks.push({ id: `S-${serial += 1}`, x: edge, z: i * 5.6, scale: 1 + (Math.abs(i) % 2) * 0.25 });
-  }
-  return blocks;
-})();
-
-/** Trees lining the walkways, mirroring the source project's pin-cushion foliage. */
-export const TREE_POSITIONS = (() => {
-  const trees = [];
-  const half = PITCH / 2;
-  for (const lane of [-half, half]) {
-    for (let step = -22; step <= 22; step += 5.5) {
-      trees.push([lane, 0, step]);
-      trees.push([step, 0, lane]);
-    }
-  }
-  return trees;
-})();
 
 /**
  * Compass bearing per zone-to-zone movement, used to orient flow tubes.
@@ -144,33 +82,10 @@ export function directionVector(value) {
 }
 
 /**
- * Explicitly simulated zone grids, one per demo scenario.
- *
- * These mirror the gating rules in crowd_forecast.py: a projection is only
- * produced when visibility is reference-like, the motion signals agree, and
- * enough continuous tracks are eligible. Every other scenario yields
- * UNAVAILABLE with the same reason text the Python baseline would emit.
- */
-// Populations are sized for a real venue concourse rather than a handful of
-// markers: a 144 m² zone holding 90–290 people spans roughly 0.6–2.0
-// persons/m², which is the range an occupied plaza actually sits in. `clear`
-// stays below its configured threshold at every horizon, while `collective`
-// drains the northern zones and concentrates on R3C2, the main exit funnel.
-const COUNTS = {
-  clear: [86, 120, 92, 104, 155, 110, 95, 132, 98],
-  collective: [90, 128, 88, 150, 240, 155, 165, 290, 170],
-};
-
-/** Change in eligible tracks per second of projection. */
-const DRIFT = {
-  clear: [4, -5, 2, 6, -3, -4, 3, 5, -2],
-  collective: [-14, -20, -12, 4, 16, 12, 22, 30, 18],
-};
-
-/**
- * Default concentration threshold per scenario, in projected tracks, with the
- * slider bounds that make it adjustable. The threshold is an operator setting;
- * these are simply the values that make each simulated scenario legible.
+ * Default concentration threshold per evidence-state scenario, in projected
+ * tracks for a REFERENCE_CELL_AREA cell, with the slider bounds that make it
+ * adjustable. The threshold is an operator setting; these are simply the
+ * values that make each simulated scenario legible.
  */
 export const SCENARIO_THRESHOLDS = {
   clear: { threshold: 300, range: [40, 600] },
@@ -180,15 +95,138 @@ export const SCENARIO_THRESHOLDS = {
   collective: { threshold: 340, range: [40, 600] },
 };
 
+/** Rounds a scaled count to a figure an operator can read off a slider. */
+function nice(value) {
+  if (value >= 1000) return Math.round(value / 50) * 50;
+  if (value >= 200) return Math.round(value / 10) * 10;
+  if (value >= 50) return Math.round(value / 5) * 5;
+  return Math.max(1, Math.round(value));
+}
+
+/** Scales a reference-cell population to the active venue's cell area. */
+export function scaleCount(value, venue) {
+  return Math.round(value * (venue.cellArea / REFERENCE_CELL_AREA));
+}
+
+/**
+ * Threshold and slider bounds for an evidence-state scenario on this venue.
+ * @param {string} scenario
+ * @param {{cellArea:number}} venue
+ * @returns {{threshold:number, range:[number, number]}}
+ */
+export function scenarioThreshold(scenario, venue) {
+  const base = SCENARIO_THRESHOLDS[scenario] || SCENARIO_THRESHOLDS.clear;
+  const factor = venue.cellArea / REFERENCE_CELL_AREA;
+  return {
+    threshold: nice(base.threshold * factor),
+    range: [nice(base.range[0] * factor), nice(base.range[1] * factor)],
+  };
+}
+
+/**
+ * @typedef {object} ZoneCell
+ * @property {string} id
+ * @property {number} row 1..3
+ * @property {number} col 1..3
+ * @property {number} x world centre, metres
+ * @property {number} z world centre, metres
+ * @property {number} width metres across (x)
+ * @property {number} depth metres along (z)
+ * @property {number} area m² the cell stands for
+ * @property {string} label venue-specific name
+ */
+
+const layouts = new Map();
+
+/**
+ * The nine cells of a venue laid out in world space, one unit per metre.
+ * Memoised per venue id — the result is identity-stable so it can feed hooks.
+ * @param {object} venue
+ * @returns {ZoneCell[]}
+ */
+export function layoutZones(venue) {
+  if (layouts.has(venue.id)) return layouts.get(venue.id);
+  const pitchX = venue.cell.width + venue.gap.x;
+  const pitchZ = venue.cell.depth + venue.gap.z;
+  const zones = ZONE_IDS.map((id, index) => {
+    const row = Math.floor(index / GRID_SIZE);
+    const col = index % GRID_SIZE;
+    return {
+      id,
+      row: row + 1,
+      col: col + 1,
+      x: (col - 1) * pitchX,
+      z: (row - 1) * pitchZ,
+      width: venue.cell.width,
+      depth: venue.cell.depth,
+      area: venue.cellAreas?.[index] ?? venue.cell.width * venue.cell.depth,
+      label: venue.zoneLabels?.[id] || id,
+    };
+  });
+  layouts.set(venue.id, zones);
+  return zones;
+}
+
+/**
+ * Unit direction each zone's crowd walks toward a target zone, in world space,
+ * with the target itself pointing in `exitDirection`.
+ * @param {object} venue
+ * @param {string} targetId
+ * @param {[number, number]} exitDirection
+ * @returns {Record<string, [number, number]>}
+ */
+export function egressFieldToward(venue, targetId, exitDirection) {
+  const zones = layoutZones(venue);
+  const target = zones.find((zone) => zone.id === targetId) || zones[4];
+  const field = {};
+  for (const zone of zones) {
+    if (zone.id === target.id) {
+      field[zone.id] = exitDirection;
+      continue;
+    }
+    const dx = target.x - zone.x;
+    const dz = target.z - zone.z;
+    const length = Math.hypot(dx, dz) || 1;
+    field[zone.id] = [dx / length, dz / length];
+  }
+  return field;
+}
+
+/**
+ * Explicitly simulated zone grids, one per evidence-state scenario.
+ *
+ * These mirror the gating rules in crowd_forecast.py: a projection is only
+ * produced when visibility is reference-like, the motion signals agree, and
+ * enough continuous tracks are eligible. Every other scenario yields
+ * UNAVAILABLE with the same reason text the Python baseline would emit.
+ *
+ * Populations are authored for the 144 m² reference cell — 90–290 people is
+ * roughly 0.6–2.0 persons/m², the range an occupied plaza actually sits in —
+ * and scaled to the venue's cell area. `clear` stays below its threshold at
+ * every horizon, while `collective` drains the northern zones and concentrates
+ * on R3C2.
+ */
+const COUNTS = {
+  clear: [86, 120, 92, 104, 155, 110, 95, 132, 98],
+  collective: [90, 128, 88, 150, 240, 155, 165, 290, 170],
+};
+
+/** Change in eligible tracks per second of projection, reference cell. */
+const DRIFT = {
+  clear: [4, -5, 2, 6, -3, -4, 3, 5, -2],
+  collective: [-14, -20, -12, 4, 16, 12, 22, 30, 18],
+};
+
 /**
  * Build a forecast payload shaped exactly like CrowdForecast.update()'s return
  * value, so a real backend forecast can be dropped in without UI changes.
  *
- * @param {string} scenario one of the demo scenario keys
+ * @param {string} scenario one of the evidence-state scenario keys
  * @param {number} threshold concentration threshold in projected tracks
+ * @param {object} venue the active venue, for cell areas
  * @returns {{status:string, reason:string, coverage:number, cells:object[], advice:string, origin:string}}
  */
-export function simulatedForecast(scenario, threshold) {
+export function simulatedForecast(scenario, threshold, venue) {
   const unavailable = (reason) => ({
     status: 'UNAVAILABLE',
     reason,
@@ -205,14 +243,15 @@ export function simulatedForecast(scenario, threshold) {
     return unavailable('Too few continuous tracks: need at least 3 and 60% of current detections.');
   }
 
-  const base = COUNTS[scenario] || COUNTS.clear;
-  const drift = DRIFT[scenario] || DRIFT.clear;
+  const zones = layoutZones(venue);
+  const base = (COUNTS[scenario] || COUNTS.clear).map((value) => scaleCount(value, venue));
+  const drift = (DRIFT[scenario] || DRIFT.clear).map((value) => scaleCount(value, venue));
   const cells = [];
 
   for (const horizon of [1, 2, 3]) {
     for (let index = 0; index < base.length; index += 1) {
       const projected = Math.max(0, base[index] + drift[index] * horizon);
-      const density = projected / ZONE_AREA_M2;
+      const density = projected / zones[index].area;
       cells.push({
         cell: ZONE_IDS[index],
         horizon_s: horizon,
@@ -256,19 +295,20 @@ export function simulatedForecast(scenario, threshold) {
  * @param {{cells?: object[]}|null} forecast
  * @param {number} horizon 1, 2 or 3 seconds
  * @param {number} threshold concentration threshold
- * @returns {Array<{id:string, label:string, x:number, z:number, current:number|null, projected:number|null, change:number|null, slowFraction:number|null, flagged:boolean, ratio:number|null}>}
+ * @param {object} venue the active venue, for geometry and labels
+ * @returns {Array<ZoneCell & {current:number|null, projected:number|null, change:number|null,
+ *   slowFraction:number|null, density:number|null, currentDensity:number|null, flagged:boolean, ratio:number|null}>}
  */
-export function zoneRows(forecast, horizon, threshold) {
+export function zoneRows(forecast, horizon, threshold, venue) {
   const byId = new Map();
   for (const cell of forecast?.cells || []) {
     if (cell.horizon_s === horizon) byId.set(cell.cell, cell);
   }
-  return ZONES.map((zone) => {
+  return layoutZones(venue).map((zone) => {
     const cell = byId.get(zone.id);
     const projected = cell ? cell.projected_tracks : null;
     return {
       ...zone,
-      label: ZONE_LABELS[zone.id] || zone.id,
       current: cell ? cell.current_eligible : null,
       projected,
       change: cell ? cell.change : null,
@@ -277,7 +317,7 @@ export function zoneRows(forecast, horizon, threshold) {
       // A backend forecast counts tracks in image cells and supplies no area,
       // so both of these stay null rather than inventing one.
       density: cell?.density_per_m2 ?? null,
-      currentDensity: cell?.density_per_m2 == null ? null : densityOf(cell.current_eligible),
+      currentDensity: cell?.density_per_m2 == null ? null : densityOf(cell.current_eligible, zone.area),
       flagged: Boolean(cell?.concentration_flag),
       ratio: projected == null || threshold <= 0 ? null : projected / threshold,
     };
