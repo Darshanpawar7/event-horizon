@@ -27,7 +27,12 @@ Change a backend demonstration scenario from PowerShell:
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/demo/scenario -ContentType application/json -Body '{"scenario":"camera"}'
 ```
 
-Allowed scenarios: `clear`, `tracking`, `visibility`, `camera`, `collective`, `surge`, `crush`. Refresh/poll the dashboard after switching.
+Allowed scenarios: `clear`, `tracking`, `visibility`, `camera`, `collective`, `surge`, `crush`, and
+`<venue>:<incident|intervention|surge|crush>` for the console's historic reconstructions (for example
+`ndls:incident`). The server reports only the headline evidence state for a timeline — a reconstruction
+of a crush reports the collective-movement state, its counterfactual the plain egress state — and echoes
+the name back as `source_id: demo-<scenario>` so the console recognises it. The timeline itself plays in
+the browser. Refresh/poll the dashboard after switching.
 
 ## Assistant
 

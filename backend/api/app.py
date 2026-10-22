@@ -7,16 +7,18 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 import llm_providers
 from incident_engine import make_incident
@@ -108,17 +110,69 @@ SCENARIOS: dict[str, dict[str, Any]] = {
     },
 }
 
+# Timelines the console plays on its own venues. The server reports only the
+# headline evidence state of each; a reconstruction of a crush reports the
+# collective-movement state, its counterfactual the plain egress state. The
+# venue prefix is echoed back in `source_id` so the console recognises it.
+TIMELINE_STATES: dict[str, dict[str, Any]] = {
+    "surge": SCENARIOS["surge"],
+    "crush": SCENARIOS["crush"],
+    "incident": SCENARIOS["crush"],
+    "intervention": SCENARIOS["surge"],
+}
+VENUE_SCENARIO = re.compile(r"^[a-z][a-z0-9_-]{0,31}:(surge|crush|incident|intervention)$")
+
+
+def is_known_scenario(value: str) -> bool:
+    return value in SCENARIOS or bool(VENUE_SCENARIO.match(value))
+
+
+def base_state(scenario: str) -> dict[str, Any]:
+    """The evidence state a scenario name resolves to."""
+    if scenario in SCENARIOS:
+        return SCENARIOS[scenario]
+    return TIMELINE_STATES[scenario.split(":", 1)[1]]
+
+
 app = FastAPI(title="Event Horizon Integration API", version="0.1.0")
+
+
+class JsonGZip(GZipMiddleware):
+    """Gzip JSON responses only.
+
+    Video is served with Range support and is already compressed, so it is
+    passed through untouched: gzipping a 206 partial response would break
+    seeking in the browser and waste CPU on bytes that do not shrink.
+    """
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope.get("path", "").endswith("/video"):
+            await self.app(scope, receive, send)
+            return
+        await super().__call__(scope, receive, send)
+
+
+app.add_middleware(JsonGZip, minimum_size=512)
 state_lock = threading.Lock()
 runtime = {"scenario": os.getenv("EH_SCENARIO", "tracking"), "acknowledged": set()}
-if runtime["scenario"] not in SCENARIOS:
+if not is_known_scenario(runtime["scenario"]):
     runtime["scenario"] = "tracking"
 
 
 class ScenarioRequest(BaseModel):
-    scenario: Literal[
-        "clear", "tracking", "visibility", "camera", "collective", "surge", "crush"
-    ]
+    """An evidence state, a plaza timeline, or `<venue>:<timeline>` for a reconstruction."""
+
+    scenario: str = Field(min_length=1, max_length=64)
+
+    @field_validator("scenario")
+    @classmethod
+    def known(cls, value: str) -> str:
+        if is_known_scenario(value):
+            return value
+        raise ValueError(
+            "Unknown scenario. Use clear, tracking, visibility, camera, collective, surge, crush, "
+            "or <venue>:<incident|intervention|surge|crush>."
+        )
 
 
 class AcknowledgeRequest(BaseModel):
@@ -140,7 +194,7 @@ def now() -> str:
 def observation() -> dict[str, Any]:
     with state_lock:
         scenario = runtime["scenario"]
-    value = deepcopy(SCENARIOS[scenario])
+    value = deepcopy(base_state(scenario))
     value.update(
         camera_id="camera-1",
         source_id=f"demo-{scenario}",
@@ -194,14 +248,15 @@ def cameras() -> list[dict[str, Any]]:
 def camera_status(camera_id: str) -> dict[str, Any]:
     if camera_id != "camera-1":
         raise HTTPException(404, "Unknown camera")
+    current = observation()
     return {
         "camera_id": camera_id,
-        "source_id": observation()["source_id"],
+        "source_id": current["source_id"],
         "connection_state": "demo",
         "analysis_state": "simulated",
         "data_origin": "demo",
-        "last_update": now(),
-        "observation": observation(),
+        "last_update": current["received_at"],
+        "observation": current,
     }
 
 
