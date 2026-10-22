@@ -1,9 +1,8 @@
-import { useRef, useMemo } from 'react';
+import { useRef, useMemo, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useVenueStore, selectObservation, isDemo } from '../../store/useVenueStore';
-import { useForecast } from '../../store/derived';
-import { scenarios } from '../../demo';
+import { useForecast, useScene, useVenue } from '../../store/derived';
 import { NEO } from '../../theme';
 
 /**
@@ -32,6 +31,9 @@ function FlowTube({ curve, color, thickness, speed, active }) {
     return texture;
   }, []);
 
+  // The canvas texture lives on the GPU; free it when the overlay is toggled off.
+  useEffect(() => () => dashTexture.dispose(), [dashTexture]);
+
   useFrame((_, delta) => {
     if (!materialRef.current || !active) return;
     dashTexture.offset.x -= speed * delta * 60;
@@ -56,80 +58,58 @@ function FlowTube({ curve, color, thickness, speed, active }) {
 /**
  * Crowd movement corridors across the venue. Nothing is drawn unless the
  * evidence establishes a direction: scene-motion-only states render a single
- * violet corridor labelled as optical flow rather than person movement.
+ * violet corridor labelled as optical flow rather than person movement. The
+ * corridor paths are part of each venue's description.
  */
 export default function CrowdFlow() {
+  const venue = useVenue();
   const forecast = useForecast();
+  const scene = useScene();
   const observation = useVenueStore(selectObservation);
   const demo = useVenueStore(isDemo);
-  const scenario = useVenueStore((state) => state.scenario);
   const visible = useVenueStore((state) => state.overlays.flow);
 
   const curves = useMemo(
-    () => ({
-      inbound: new THREE.CatmullRomCurve3([
-        new THREE.Vector3(0, 1.4, -32),
-        new THREE.Vector3(0, 4.5, -20),
-        new THREE.Vector3(0, 3.4, -14.4),
-        new THREE.Vector3(0, 2.6, 0),
-      ]),
-      egress: new THREE.CatmullRomCurve3([
-        new THREE.Vector3(0, 2.6, 0),
-        new THREE.Vector3(0, 3.6, 14.4),
-        new THREE.Vector3(0, 2.2, 22),
-        new THREE.Vector3(0, 1.2, 28),
-      ]),
-      lateral: new THREE.CatmullRomCurve3([
-        new THREE.Vector3(-14.4, 2.4, 0),
-        new THREE.Vector3(-7, 4.4, 1.2),
-        new THREE.Vector3(7, 4.4, -1.2),
-        new THREE.Vector3(14.4, 2.4, 0),
-      ]),
-      reversal: new THREE.CatmullRomCurve3([
-        new THREE.Vector3(0, 2.2, 20),
-        new THREE.Vector3(0, 5.2, 12),
-        new THREE.Vector3(0, 5.6, 0),
-        new THREE.Vector3(0, 4.0, -12),
-      ]),
-      sceneMotion: new THREE.CatmullRomCurve3([
-        new THREE.Vector3(-22, 6.5, -6),
-        new THREE.Vector3(0, 7.5, -2),
-        new THREE.Vector3(22, 6.5, 2),
-      ]),
-    }),
-    [],
+    () =>
+      Object.fromEntries(
+        Object.entries(venue.corridors).map(([name, points]) => [
+          name,
+          new THREE.CatmullRomCurve3(points.map(([x, y, z]) => new THREE.Vector3(x, y, z))),
+        ]),
+      ),
+    [venue],
   );
 
-  // Read the demo scenario's own motion state rather than a second mapping,
-  // so a new scenario cannot silently fall through to UNRELIABLE.
-  const motionState = demo ? scenarios[scenario]?.motion : observation?.motion_state;
+  // Read the scene's own motion state rather than a second mapping, so a new
+  // scenario cannot silently fall through to UNRELIABLE.
+  const motionState = demo ? scene.motion : observation?.motion_state;
 
   const projected = forecast.status !== 'UNAVAILABLE';
   const reversing = motionState === 'UNUSUAL COLLECTIVE MOVEMENT';
   const sceneMotionOnly = motionState === 'FLOW AVAILABLE; PERSON MOTION UNAVAILABLE';
+  // Thin tubes on venues whose corridors are a few metres wide.
+  const scale = Math.min(1, Math.max(0.35, venue.cell.width / 12));
 
   const config = {
-    inbound: { active: projected && !reversing, thickness: 0.14, speed: 0.024, color: NEO.orange },
+    inbound: { active: projected && !reversing, thickness: 0.14 * scale, speed: 0.024, color: NEO.orange },
     egress: {
       active: projected,
-      thickness: reversing ? 0.08 : 0.16,
+      thickness: (reversing ? 0.08 : 0.16) * scale,
       speed: reversing ? 0.01 : 0.028,
       color: reversing ? NEO.amber : NEO.green,
     },
-    lateral: { active: projected, thickness: 0.09, speed: 0.02, color: NEO.violet },
-    reversal: { active: projected && reversing, thickness: 0.2, speed: 0.042, color: NEO.red },
-    sceneMotion: { active: sceneMotionOnly, thickness: 0.07, speed: 0.03, color: NEO.violet },
+    lateral: { active: projected, thickness: 0.09 * scale, speed: 0.02, color: NEO.violet },
+    reversal: { active: projected && reversing, thickness: 0.2 * scale, speed: 0.042, color: NEO.red },
+    sceneMotion: { active: sceneMotionOnly, thickness: 0.07 * scale, speed: 0.03, color: NEO.violet },
   };
 
   if (!visible) return null;
 
   return (
     <group>
-      <FlowTube curve={curves.inbound} {...config.inbound} />
-      <FlowTube curve={curves.egress} {...config.egress} />
-      <FlowTube curve={curves.lateral} {...config.lateral} />
-      <FlowTube curve={curves.reversal} {...config.reversal} />
-      <FlowTube curve={curves.sceneMotion} {...config.sceneMotion} />
+      {Object.entries(config).map(([name, settings]) =>
+        curves[name] ? <FlowTube key={`${venue.id}-${name}`} curve={curves[name]} {...settings} /> : null,
+      )}
     </group>
   );
 }

@@ -2,9 +2,8 @@ import { useRef, useMemo, useLayoutEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useVenueStore, selectFlowVector } from '../../store/useVenueStore';
-import { useZones, useForecast } from '../../store/derived';
-import { ZONE_SPAN, speedFactor } from '../../data/venueModel';
-import { EGRESS_FIELD, isTimelineScenario } from '../../data/crowdTimeline';
+import { useZones, useForecast, useVenue, useTimeline } from '../../store/derived';
+import { speedFactor } from '../../data/venueModel';
 import { densityBand, densityStep } from '../../theme';
 
 /**
@@ -17,8 +16,6 @@ const MAX_INSTANCES = 9 * PER_ZONE_CAP;
 
 /** Free walking speed in world units (metres) per second. */
 const FREE_SPEED = 1.34;
-/** Half-width of the area inside a zone tile that markers may occupy. */
-const REACH = (ZONE_SPAN - 1.2) / 2;
 /** How fast the rendered population catches up with a changing count. */
 const POPULATION_LERP = 2.2;
 
@@ -33,18 +30,20 @@ const tint = new THREE.Color();
  * individual identities. What *is* modelled is the relationship every crowd
  * obeys and every operator needs to see: as a zone packs, walking speed falls
  * toward a shuffle, lateral jostle grows, and the mass compresses against the
- * downstream edge instead of spreading out evenly.
+ * downstream edge instead of spreading out evenly. Markers are human-sized
+ * (0.44 m across), so a three-abreast alley looks like one.
  */
 export default function CrowdParticles() {
   const meshRef = useRef(null);
+  const venue = useVenue();
   const zones = useZones();
   const forecast = useForecast();
+  const timeline = useTimeline();
   const flow = useVenueStore(selectFlowVector);
-  const scenario = useVenueStore((state) => state.scenario);
   const visible = useVenueStore((state) => state.overlays.trajectories);
 
-  const timeline = isTimelineScenario(scenario);
-  const counterflow = timeline ? forecast.counterflow || 0 : 0;
+  const onTimeline = Boolean(timeline);
+  const counterflow = onTimeline ? forecast.counterflow || 0 : 0;
 
   // One slot per possible instance, seeded deterministically so the scene does
   // not reshuffle on every render. Each slot carries its own pace, phase and
@@ -57,10 +56,8 @@ export default function CrowdParticles() {
         const c = fract(Math.sin(index * 39.425) * 17231.1234);
         const d = fract(Math.sin(index * 93.989) * 51237.8765);
         return {
-          // Start position split into along-field and across-field offsets, so
-          // the crowd can be advanced and compressed along its line of travel.
-          along: (a * 2 - 1) * REACH,
-          across: (b * 2 - 1) * REACH,
+          ox: a * 2 - 1, // start position as a fraction of the cell's half-extents
+          oz: b * 2 - 1,
           pace: 0.78 + c * 0.44, // personal walking speed, ±22% of free speed
           phase: d * Math.PI * 2, // jostle phase, so nobody sways in unison
           build: 0.86 + c * 0.3, // marker height variation
@@ -107,19 +104,21 @@ export default function CrowdParticles() {
       // legible sign of a concourse in trouble.
       const pace = speedFactor(density);
       // Packed crowds sway against each other; free-flowing ones barely do.
-      const jostle = 0.05 + (1 - pace) * 0.5;
+      const jostle = (0.05 + (1 - pace) * 0.5) * Math.min(1, zone.width / 4);
       // And they compress toward the edge they are trying to leave through
       // instead of staying evenly spread across the zone.
       const compression = Math.min(0.55, Math.max(0, (density - 1.6) / 6));
 
-      const [fieldX, fieldZ] = timeline ? EGRESS_FIELD[zone.id] : [globalX, globalZ];
-      // Keep a diagonally-oriented crowd inside its own tile.
-      const reach = REACH / (Math.abs(fieldX) + Math.abs(fieldZ) || 1);
-      const span = reach * 2;
+      const [fieldX, fieldZ] = onTimeline ? venue.egressField[zone.id] || [0, 1] : [globalX, globalZ];
+      const margin = Math.min(0.6, 0.15 * Math.min(zone.width, zone.depth));
+      const halfW = zone.width / 2 - margin;
+      const halfD = zone.depth / 2 - margin;
+      // Travel wraps once a marker has crossed the cell along its line of travel.
+      const span = 2 * (Math.abs(fieldX) * halfW + Math.abs(fieldZ) * halfD) || 1;
       const heading = Math.atan2(fieldX, fieldZ);
       const band = zone.currentDensity == null ? densityStep(zone.ratio) : densityBand(density);
       const base = zoneIndex * PER_ZONE_CAP;
-      const drifting = moving || timeline;
+      const drifting = moving || onTimeline;
 
       for (let n = 0; n < count; n += 1) {
         // Travel is stored against the slot, not the draw order, so people do
@@ -133,22 +132,28 @@ export default function CrowdParticles() {
         const direction = reversed ? -1 : 1;
 
         if (drifting) {
-          const moved =
-            progress.current[slotIndex] + step * FREE_SPEED * pace * slot.pace * direction;
+          const moved = progress.current[slotIndex] + step * FREE_SPEED * pace * slot.pace * direction;
           progress.current[slotIndex] = Math.abs(moved) > span ? moved % span : moved;
         }
-        // Distance along the line of travel, wrapped inside the tile…
-        let along = wrap(slot.along + progress.current[slotIndex], reach);
-        // …then squeezed toward the downstream edge as density rises.
-        along = reach - (reach - along) * (1 - compression);
-        const across = slot.across * (1 - compression * 0.3) + Math.sin(time * 2.4 + slot.phase) * jostle;
+        const travel = progress.current[slotIndex];
+        const sway = Math.sin(time * 2.4 + slot.phase) * jostle;
 
-        // Perpendicular of (fieldX, fieldZ) is (-fieldZ, fieldX).
-        dummy.position.set(
-          zone.x + fieldX * along - fieldZ * across,
-          -0.24,
-          zone.z + fieldZ * along + fieldX * across,
-        );
+        // Position along the field, wrapped inside the cell on each axis, then
+        // squeezed toward the downstream edge as density rises.
+        let px = wrap(slot.ox * halfW + fieldX * travel - fieldZ * sway, halfW);
+        let pz = wrap(slot.oz * halfD + fieldZ * travel + fieldX * sway, halfD);
+        if (compression > 0) {
+          if (fieldX !== 0) {
+            const edge = Math.sign(fieldX) * halfW;
+            px = edge - (edge - px) * (1 - compression * Math.abs(fieldX));
+          }
+          if (fieldZ !== 0) {
+            const edge = Math.sign(fieldZ) * halfD;
+            pz = edge - (edge - pz) * (1 - compression * Math.abs(fieldZ));
+          }
+        }
+
+        dummy.position.set(zone.x + px, -0.24, zone.z + pz);
         dummy.rotation.set(0, reversed ? heading + Math.PI : heading, 0);
         dummy.scale.set(1, slot.build, 1);
         dummy.updateMatrix();
@@ -172,8 +177,9 @@ export default function CrowdParticles() {
   );
 }
 
-/** Keeps a drifting marker inside its zone by wrapping at the tile edge. */
+/** Keeps a drifting marker inside its zone by wrapping at the cell edge. */
 function wrap(value, half) {
+  if (half <= 0) return 0;
   const span = half * 2;
   return ((((value + half) % span) + span) % span) - half;
 }

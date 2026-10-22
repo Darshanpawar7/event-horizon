@@ -2,19 +2,22 @@ import { useRef, useMemo, useEffect } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useVenueStore } from '../../store/useVenueStore';
-import { useForecast } from '../../store/derived';
+import { useForecast, useTimeline, useVenue } from '../../store/derived';
 import { NEO } from '../../theme';
 
 /**
  * Lighting, fog and the operations hub mesh. Each evidence state gets a
- * distinct scene mood so a degraded view is legible before reading any text.
+ * distinct scene mood so a degraded view is legible before reading any text;
+ * timelines carry their own mood (late egress light, or the darker crush).
  */
 export default function SceneEffects() {
   const { scene } = useThree();
+  const venue = useVenue();
   const forecast = useForecast();
+  const timeline = useTimeline();
   // Demo mode names the mood directly; backend mode maps the reported
-  // visibility and motion fields onto the same five moods.
-  const moodKey = useVenueStore((state) => {
+  // visibility and motion fields onto the same moods.
+  const stateKey = useVenueStore((state) => {
     if (state.mode === 'demo') return state.scenario;
     const observation = state.status?.observation;
     if (!observation) return 'tracking';
@@ -24,6 +27,7 @@ export default function SceneEffects() {
     if (observation.motion_state === 'UNUSUAL COLLECTIVE MOVEMENT') return 'collective';
     return 'clear';
   });
+  const moodKey = timeline ? (timeline.kind === 'authored' ? timeline.id : timeline.intervention ? 'surge' : 'crush') : stateKey;
 
   const ambientRef = useRef(null);
   const sunRef = useRef(null);
@@ -76,9 +80,9 @@ export default function SceneEffects() {
         sunColor: new THREE.Color('#FF8833'),
         sunIntensity: 1.1,
       },
-      // Timeline scenarios: an end-of-event egress reads as late light, and the
-      // crush timeline darkens further so the twin does not look calm while the
-      // exit funnel is in the band the console is warning about.
+      // Timeline scenarios: an egress reads as late light, and a crush
+      // reconstruction darkens further so the twin does not look calm while
+      // the console is warning about the band the crowd is in.
       surge: {
         background: new THREE.Color('#E9DCC9'),
         fogColor: new THREE.Color('#E9DCC9'),
@@ -102,6 +106,8 @@ export default function SceneEffects() {
   const mood = MOODS[moodKey] || MOODS.clear;
   const reviewing = forecast.status === 'REVIEW CONCENTRATION';
   const hubColor = forecast.status === 'UNAVAILABLE' ? NEO.grey : reviewing ? NEO.red : NEO.green;
+  // Fog thins on venues that span more world units than the plaza.
+  const fogScale = Math.min(1, 140 / (venue.ground?.size ?? 140));
 
   useFrame((state) => {
     const time = state.clock.getElapsedTime();
@@ -125,13 +131,15 @@ export default function SceneEffects() {
 
     if (scene.fog instanceof THREE.FogExp2) {
       scene.fog.color.lerp(mood.fogColor, 0.03);
-      scene.fog.density = THREE.MathUtils.lerp(scene.fog.density, mood.fogDensity, 0.03);
+      scene.fog.density = THREE.MathUtils.lerp(scene.fog.density, mood.fogDensity * fogScale, 0.03);
     }
 
     if (alertLightRef.current) {
       alertLightRef.current.intensity = reviewing ? (Math.sin(time * 6) * 0.4 + 0.6) * 3.0 : 0;
     }
   });
+
+  const hub = venue.controlRoom;
 
   return (
     <group>
@@ -144,41 +152,43 @@ export default function SceneEffects() {
         intensity={0.8}
         shadow-mapSize-width={1024}
         shadow-mapSize-height={1024}
-        shadow-camera-far={140}
-        shadow-camera-left={-46}
-        shadow-camera-right={46}
-        shadow-camera-top={46}
-        shadow-camera-bottom={-46}
+        shadow-camera-far={200}
+        shadow-camera-left={-70}
+        shadow-camera-right={70}
+        shadow-camera-top={70}
+        shadow-camera-bottom={-70}
       />
 
       {/* Operations hub — the physical counterpart of this console */}
-      <group position={[0, 0, -34]}>
-        <mesh receiveShadow position={[0, -0.6, 0]}>
-          <boxGeometry args={[9, 0.1, 6]} />
-          <meshStandardMaterial color={NEO.metal} roughness={0.9} />
-        </mesh>
-        <mesh castShadow position={[0, 0.4, 0]}>
-          <boxGeometry args={[3.2, 1.8, 2.2]} />
-          <meshStandardMaterial color={NEO.ink} metalness={0.7} roughness={0.3} />
-        </mesh>
-        <mesh position={[0, 0.5, 1.11]}>
-          <planeGeometry args={[2.4, 1.0]} />
-          <meshBasicMaterial color="#111827" />
-        </mesh>
-        <mesh position={[0, 1.5, 0]}>
-          <sphereGeometry args={[0.16, 16, 16]} />
-          <meshBasicMaterial color={hubColor} />
-        </mesh>
-        {/* Mast carrying the venue-wide reference antenna */}
-        <mesh castShadow position={[2.4, 2.2, -1.4]}>
-          <cylinderGeometry args={[0.07, 0.12, 5.2]} />
-          <meshStandardMaterial color={NEO.ink} metalness={0.95} roughness={0.2} />
-        </mesh>
-        <mesh castShadow position={[2.4, 4.6, -1.4]}>
-          <boxGeometry args={[2.6, 0.08, 0.08]} />
-          <meshStandardMaterial color={NEO.ink} metalness={0.95} roughness={0.2} />
-        </mesh>
-      </group>
+      {hub && (
+        <group position={[hub[0], 0, hub[1]]}>
+          <mesh receiveShadow position={[0, -0.6, 0]}>
+            <boxGeometry args={[9, 0.1, 6]} />
+            <meshStandardMaterial color={NEO.metal} roughness={0.9} />
+          </mesh>
+          <mesh castShadow position={[0, 0.4, 0]}>
+            <boxGeometry args={[3.2, 1.8, 2.2]} />
+            <meshStandardMaterial color={NEO.ink} metalness={0.7} roughness={0.3} />
+          </mesh>
+          <mesh position={[0, 0.5, 1.11]}>
+            <planeGeometry args={[2.4, 1.0]} />
+            <meshBasicMaterial color="#111827" />
+          </mesh>
+          <mesh position={[0, 1.5, 0]}>
+            <sphereGeometry args={[0.16, 16, 16]} />
+            <meshBasicMaterial color={hubColor} />
+          </mesh>
+          {/* Mast carrying the venue-wide reference antenna */}
+          <mesh castShadow position={[2.4, 2.2, -1.4]}>
+            <cylinderGeometry args={[0.07, 0.12, 5.2]} />
+            <meshStandardMaterial color={NEO.ink} metalness={0.95} roughness={0.2} />
+          </mesh>
+          <mesh castShadow position={[2.4, 4.6, -1.4]}>
+            <boxGeometry args={[2.6, 0.08, 0.08]} />
+            <meshStandardMaterial color={NEO.ink} metalness={0.95} roughness={0.2} />
+          </mesh>
+        </group>
+      )}
 
       <pointLight ref={alertLightRef} color={NEO.red} intensity={0} distance={40} position={[0, 6, 6]} />
     </group>

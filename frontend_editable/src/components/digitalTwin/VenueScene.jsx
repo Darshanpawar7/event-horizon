@@ -2,7 +2,8 @@ import { useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { useVenueStore, selectObservation, isDemo } from '../../store/useVenueStore';
-import { useForecast } from '../../store/derived';
+import { useForecast, useVenue } from '../../store/derived';
+import { getVenue, DEFAULT_VENUE_ID } from '../../data/venues';
 import VenuePlaza from './VenuePlaza';
 import CameraMasts from './CameraMasts';
 import ExitGates from './ExitGates';
@@ -10,6 +11,7 @@ import CrowdParticles from './CrowdParticles';
 import CrowdFlow from './CrowdFlow';
 import SceneEffects from './SceneEffects';
 import SignalOverlay from './SignalOverlay';
+import CameraRig from './CameraRig';
 import ViewControls from '../dashboard/ViewControls';
 import OverlayPanel from './OverlayPanel';
 import PitchGuide from './PitchGuide';
@@ -48,10 +50,12 @@ function UnstableView({ children }) {
 }
 
 /**
- * The 3D venue digital twin: plaza, analysed zone grid, cameras, egress line,
- * crowd markers and movement corridors, with floating operator overlays.
+ * The 3D venue digital twin: the active venue's floor and structures, the
+ * analysed zone grid, cameras, exits, crowd markers and movement corridors,
+ * with floating operator overlays.
  */
 export default function VenueScene() {
+  const venue = useVenue();
   const forecast = useForecast();
   const observation = useVenueStore(selectObservation);
   const demo = useVenueStore(isDemo);
@@ -63,6 +67,7 @@ export default function VenueScene() {
     : observation?.source_id
       ? `SOURCE ${observation.source_id}`
       : 'NO SOURCE';
+  const initial = getVenue(DEFAULT_VENUE_ID).camera;
 
   return (
     <div style={stageStyle}>
@@ -76,7 +81,26 @@ export default function VenueScene() {
         </div>
       </div>
 
-      <Canvas shadows camera={{ position: [-48, 42, 55], fov: 42 }} gl={{ antialias: true, alpha: false }}>
+      {/* Which venue the twin stands over, and whether it is a reconstruction */}
+      <div style={venueBannerStyle}>
+        <div style={{ fontSize: 8, letterSpacing: '0.14em', color: venue.kind === 'historic' ? NEO.crimson : NEO.orange }}>
+          {venue.kind === 'historic' ? 'RECONSTRUCTION · SIMULATED FROM PUBLISHED ACCOUNTS' : 'GENERIC VENUE · SIMULATED'}
+        </div>
+        <div style={{ fontSize: 12, fontWeight: 900, marginTop: 2 }}>{venue.name.toUpperCase()}</div>
+        <div style={{ fontSize: 8, color: NEO.grey, marginTop: 2 }}>
+          {venue.incident ? `${venue.place} · ${venue.incident.date}` : venue.place}
+        </div>
+      </div>
+
+      {/* 'percentage' = PCFShadowMap. three r184 deprecated the soft variant that the
+          bare `shadows` flag selects and logs a warning on every renderer creation.
+          Device pixel ratio is left at React Three Fiber's default so high-DPI
+          screens render at full resolution. */}
+      <Canvas
+        shadows="percentage"
+        camera={{ position: initial.position, fov: 42 }}
+        gl={{ antialias: true, alpha: false, powerPreference: 'high-performance' }}
+      >
         <SceneEffects />
         <UnstableView>
           <VenuePlaza />
@@ -86,13 +110,15 @@ export default function VenueScene() {
           <CrowdFlow />
         </UnstableView>
         <OrbitControls
+          makeDefault
           enableDamping
           dampingFactor={0.05}
           maxPolarAngle={Math.PI / 2 - 0.05}
-          minDistance={22}
-          maxDistance={150}
-          target={[0, 0, -2]}
+          minDistance={8}
+          maxDistance={220}
+          target={initial.target}
         />
+        <CameraRig />
       </Canvas>
 
       {/* Legend and provenance banner share one column so neither can cover
@@ -119,7 +145,7 @@ export default function VenueScene() {
             {demo && (
               <>
                 <div style={{ ...legendCaptionStyle, marginTop: 8, borderTop: `1px solid ${NEO.line}`, paddingTop: 6 }}>
-                  CROWD · PERSONS/m² (SIMULATED)
+                  CROWD · PERSONS/m² (SIMULATED, {venue.cellArea} m² CELLS)
                 </div>
                 {DENSITY_BANDS.map((band) => (
                   <div key={band.key} style={legendRowStyle}>
@@ -177,6 +203,24 @@ const compassStyle = {
   boxShadow: `3px 3px 0 ${NEO.ink}`,
   display: 'grid',
   placeItems: 'center',
+};
+
+const venueBannerStyle = {
+  position: 'absolute',
+  top: 16,
+  left: '50%',
+  transform: 'translateX(-50%)',
+  zIndex: 10,
+  pointerEvents: 'none',
+  background: NEO.surface,
+  border: HARD.border,
+  boxShadow: HARD.shadowSm,
+  padding: '7px 14px',
+  fontFamily: MONO,
+  color: NEO.ink,
+  textAlign: 'center',
+  borderRadius: 2,
+  maxWidth: '38%',
 };
 
 const rightColumnStyle = {

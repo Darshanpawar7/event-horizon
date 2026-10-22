@@ -11,6 +11,9 @@ const SOURCE_ACCENT = {
   Forecast: NEO.green,
   Observation: NEO.orange,
   Operator: NEO.ink,
+  Model: NEO.violet,
+  Timeline: NEO.amber,
+  Venue: NEO.crimson,
 };
 
 const VISIBLE_ENTRIES = 5;

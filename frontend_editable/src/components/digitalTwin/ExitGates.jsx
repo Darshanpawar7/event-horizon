@@ -2,23 +2,23 @@ import { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
-import { useZones } from '../../store/derived';
+import { useZones, useVenue } from '../../store/derived';
 import { useVenueStore } from '../../store/useVenueStore';
-import { EXIT_GATES } from '../../data/venueModel';
 import { NEO, MONO, densityStep } from '../../theme';
 
-const GATE_Z = 27;
-
 /**
- * One egress gate. The ring pulses faster as the feeding zone's projected
- * occupancy rises; it reflects the zone reading only and does not model
- * throughput, gate width or actual queueing.
+ * One exit. The ring pulses faster as the feeding zone's projected occupancy
+ * rises; it reflects the zone reading only and does not model throughput,
+ * opening width or actual queueing.
  */
 function Gate({ gate, ratio, index }) {
   const ringRef = useRef(null);
   const known = ratio != null;
   const { color } = densityStep(ratio);
   const pulseSpeed = known ? 1.4 + Math.min(ratio, 2) * 1.6 : 0;
+  const halfWidth = gate.width / 2;
+  const padWidth = gate.width + 1.2;
+  const ring = Math.max(0.6, Math.min(2.0, gate.width * 0.45));
 
   useFrame(({ clock }) => {
     if (!ringRef.current || !known) return;
@@ -28,24 +28,24 @@ function Gate({ gate, ratio, index }) {
   });
 
   return (
-    <group position={[gate.x, 0, 0]}>
+    <group position={[gate.x, 0, gate.z]} rotation={[0, gate.rotation || 0, 0]}>
       {/* Gate pad */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.56, 0]} receiveShadow>
-        <planeGeometry args={[4.6, 5]} />
+        <planeGeometry args={[padWidth, Math.min(5, padWidth)]} />
         <meshStandardMaterial color={known ? '#3f4448' : '#5a5f63'} roughness={0.95} />
       </mesh>
 
-      {/* Turnstile posts */}
-      {[-1.7, 1.7].map((x) => (
+      {/* Posts */}
+      {[-halfWidth - 0.2, halfWidth + 0.2].map((x) => (
         <mesh key={x} castShadow position={[x, 0.05, 0]}>
           <boxGeometry args={[0.34, 1.2, 0.34]} />
           <meshStandardMaterial color={NEO.ink} metalness={0.7} roughness={0.3} />
         </mesh>
       ))}
 
-      {/* Status bar spanning the gate */}
+      {/* Status bar spanning the opening */}
       <mesh position={[0, 0.62, 0]}>
-        <boxGeometry args={[3.4, 0.18, 0.18]} />
+        <boxGeometry args={[gate.width + 0.4, 0.18, 0.18]} />
         <meshStandardMaterial
           color={known ? color : NEO.grey}
           emissive={known ? color : '#000000'}
@@ -55,7 +55,7 @@ function Gate({ gate, ratio, index }) {
 
       {known && (
         <mesh ref={ringRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.5, 0]}>
-          <ringGeometry args={[1.5, 2.0, 32]} />
+          <ringGeometry args={[ring * 0.75, ring, 32]} />
           <meshBasicMaterial color={color} transparent opacity={0.45} side={THREE.DoubleSide} />
         </mesh>
       )}
@@ -63,38 +63,56 @@ function Gate({ gate, ratio, index }) {
   );
 }
 
-/** The south egress line: canopy, support columns and six gates. */
+/**
+ * The venue's exits — gates on a plaza, a stair flight, the ends of an alley,
+ * the water's edge — each pulsing with the projected occupancy of the zone
+ * that feeds it. A venue with a `gateLine` also gets the canopy and columns.
+ */
 export default function ExitGates() {
+  const venue = useVenue();
   const zones = useZones();
   const visible = useVenueStore((state) => state.overlays.gates);
   const byId = new Map(zones.map((zone) => [zone.id, zone]));
 
-  const open = zones.filter((zone) => zone.id.startsWith('R3') && zone.ratio != null).length;
+  const feeding = new Set(venue.gates.map((gate) => gate.zone));
+  const open = zones.filter((zone) => feeding.has(zone.id) && zone.ratio != null).length;
   const known = open > 0;
 
-  if (!visible) return null;
+  const label = venue.gateLine
+    ? [venue.gateLine.x, 6.1, venue.gateLine.z]
+    : [
+        venue.gates.reduce((sum, gate) => sum + gate.x, 0) / Math.max(1, venue.gates.length),
+        4.2,
+        venue.gates.reduce((sum, gate) => sum + gate.z, 0) / Math.max(1, venue.gates.length),
+      ];
+
+  if (!visible || venue.gates.length === 0) return null;
 
   return (
-    <group position={[0, 0, GATE_Z]}>
-      {/* Canopy */}
-      <mesh position={[0, 4.4, 0]} castShadow>
-        <boxGeometry args={[30, 0.22, 5]} />
-        <meshStandardMaterial color="#3A4046" metalness={0.6} roughness={0.4} />
-      </mesh>
-      {[-14, -7, 0, 7, 14].map((x) => (
-        <mesh key={x} position={[x, 2.2, 0]} castShadow>
-          <cylinderGeometry args={[0.16, 0.16, 4.6, 8]} />
-          <meshStandardMaterial color={NEO.ink} metalness={0.95} roughness={0.1} />
-        </mesh>
-      ))}
+    <group>
+      {venue.gateLine && (
+        <group position={[venue.gateLine.x, 0, venue.gateLine.z]} rotation={[0, venue.gateLine.rotation || 0, 0]}>
+          {/* Canopy */}
+          <mesh position={[0, 4.4, 0]} castShadow>
+            <boxGeometry args={[venue.gateLine.length, 0.22, 5]} />
+            <meshStandardMaterial color="#3A4046" metalness={0.6} roughness={0.4} />
+          </mesh>
+          {Array.from({ length: 5 }, (_, i) => (i - 2) * (venue.gateLine.length / 4.3)).map((x) => (
+            <mesh key={x} position={[x, 2.2, 0]} castShadow>
+              <cylinderGeometry args={[0.16, 0.16, 4.6, 8]} />
+              <meshStandardMaterial color={NEO.ink} metalness={0.95} roughness={0.1} />
+            </mesh>
+          ))}
+        </group>
+      )}
 
-      {EXIT_GATES.map((gate, index) => (
+      {venue.gates.map((gate, index) => (
         <Gate key={gate.id} gate={gate} index={index} ratio={byId.get(gate.zone)?.ratio ?? null} />
       ))}
 
-      <Html position={[0, 6.1, 0]} center pointerEvents="none" distanceFactor={46}>
+      <Html position={label} center pointerEvents="none" distanceFactor={46}>
         <div style={labelStyle}>
-          EGRESS LINE — {known ? `${EXIT_GATES.length} GATES MONITORED` : 'NO ZONE PROJECTION'}
+          {venue.gateLabel || 'EXITS'} — {known ? `${venue.gates.length} MONITORED` : 'NO ZONE PROJECTION'}
         </div>
       </Html>
     </group>

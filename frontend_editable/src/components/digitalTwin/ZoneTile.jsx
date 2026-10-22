@@ -1,25 +1,33 @@
-import { useRef, useState, useMemo } from 'react';
+import { useRef, useState, useMemo, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { useVenueStore } from '../../store/useVenueStore';
-import { ZONE_SPAN } from '../../data/venueModel';
-import { NEO, MONO, densityStep, UNKNOWN_COLOR } from '../../theme';
+import { NEO, MONO, densityStep, densityBand, UNKNOWN_COLOR } from '../../theme';
 
 const MIN_HEIGHT = 0.45;
 const MAX_HEIGHT = 9;
+/** Simulated density (persons/m²) from which a tile shows the crush ring. */
+const CRUSH_RISK_DENSITY = 3.5;
+
+// Reused every frame rather than allocated sixty times a second per tile.
+const scratchScale = new THREE.Vector3();
 
 /**
  * One cell of the 3x3 concentration grid. The column height encodes projected
  * occupancy relative to the configured threshold; a zone with no projection
- * renders as a flat unknown slab rather than a zero-height reading.
+ * renders as a flat unknown slab rather than a zero-height reading. Tiles take
+ * their footprint from the venue — twelve metres square on the plaza, a metre
+ * wide in the alley.
  *
- * @param {{zone: {id:string,label:string,x:number,z:number,projected:number|null,current:number|null,ratio:number|null,flagged:boolean}}} props
+ * @param {{zone: {id:string,label:string,x:number,z:number,width:number,depth:number,projected:number|null,
+ *   current:number|null,ratio:number|null,flagged:boolean,density:number|null,currentDensity:number|null}}} props
  */
 export default function ZoneTile({ zone }) {
   const groupRef = useRef(null);
   const columnRef = useRef(null);
   const glowRef = useRef(null);
+  const crushRef = useRef(null);
   const [hovered, setHovered] = useState(false);
 
   const selectedZone = useVenueStore((state) => state.selectedZone);
@@ -29,6 +37,18 @@ export default function ZoneTile({ zone }) {
   const isSelected = selectedZone === zone.id;
   const known = zone.ratio != null;
   const { color, label } = densityStep(zone.ratio);
+  const crush = zone.currentDensity != null && zone.currentDensity >= CRUSH_RISK_DENSITY;
+
+  // Leave a margin inside the cell, proportionally smaller on narrow cells.
+  const margin = Math.min(0.6, 0.12 * Math.min(zone.width, zone.depth));
+  const insetW = zone.width - margin;
+  const insetD = zone.depth - margin;
+  const column = Math.min(insetW, insetD) * 0.34;
+  const ringOuter = Math.min(insetW, insetD) * 0.48;
+
+  // One edge geometry per tile footprint, disposed when the footprint changes.
+  const edges = useMemo(() => new THREE.EdgesGeometry(new THREE.PlaneGeometry(insetW, insetD)), [insetW, insetD]);
+  useEffect(() => () => edges.dispose(), [edges]);
 
   const targetHeight = useMemo(() => {
     if (!known || !showDensity) return MIN_HEIGHT;
@@ -40,7 +60,7 @@ export default function ZoneTile({ zone }) {
 
     if (groupRef.current) {
       const targetScale = isSelected ? 1.04 : hovered ? 1.02 : 1.0;
-      groupRef.current.scale.lerp(new THREE.Vector3(targetScale, 1, targetScale), 0.15);
+      groupRef.current.scale.lerp(scratchScale.set(targetScale, 1, targetScale), 0.15);
     }
 
     if (columnRef.current) {
@@ -55,6 +75,12 @@ export default function ZoneTile({ zone }) {
       const pulse = 1.0 + Math.sin(time * 4) * 0.08;
       glowRef.current.scale.set(pulse, pulse, pulse);
       glowRef.current.material.opacity = 0.22 + Math.sin(time * 4) * 0.1;
+    }
+
+    if (crushRef.current && crush) {
+      const pulse = 1.0 + Math.sin(time * 7) * 0.12;
+      crushRef.current.scale.set(pulse, pulse, pulse);
+      crushRef.current.material.opacity = 0.35 + Math.sin(time * 7) * 0.2;
     }
   });
 
@@ -75,7 +101,7 @@ export default function ZoneTile({ zone }) {
     document.body.style.cursor = 'auto';
   };
 
-  const inset = ZONE_SPAN - 0.6;
+  const band = crush ? densityBand(zone.currentDensity) : null;
 
   return (
     <group ref={groupRef} position={[zone.x, 0, zone.z]}>
@@ -88,20 +114,19 @@ export default function ZoneTile({ zone }) {
         onPointerOver={enter}
         onPointerOut={leave}
       >
-        <planeGeometry args={[inset, inset]} />
+        <planeGeometry args={[insetW, insetD]} />
         <meshStandardMaterial
           color={known ? '#FFFFFF' : '#DEE1E4'}
           roughness={1.0}
           metalness={0}
           flatShading
-          emissive={color}
-          emissiveIntensity={isSelected ? 0.22 : hovered ? 0.1 : 0.04}
+          emissive={crush ? band.color : color}
+          emissiveIntensity={crush ? 0.3 : isSelected ? 0.22 : hovered ? 0.1 : 0.04}
         />
       </mesh>
 
       {/* Tile border */}
-      <lineSegments position={[0, -0.565, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <edgesGeometry args={[new THREE.PlaneGeometry(inset, inset)]} />
+      <lineSegments geometry={edges} position={[0, -0.565, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <lineBasicMaterial color={isSelected ? NEO.ink : known ? color : UNKNOWN_COLOR} />
       </lineSegments>
 
@@ -114,7 +139,7 @@ export default function ZoneTile({ zone }) {
         onPointerOver={enter}
         onPointerOut={leave}
       >
-        <boxGeometry args={[inset * 0.34, 1, inset * 0.34]} />
+        <boxGeometry args={[column, 1, column]} />
         <meshStandardMaterial
           color={known ? color : UNKNOWN_COLOR}
           transparent
@@ -129,15 +154,23 @@ export default function ZoneTile({ zone }) {
       {/* Concentration pulse ring */}
       {zone.flagged && (
         <mesh ref={glowRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.54, 0]}>
-          <ringGeometry args={[inset * 0.4, inset * 0.48, 48]} />
+          <ringGeometry args={[ringOuter * 0.83, ringOuter, 48]} />
           <meshBasicMaterial color={NEO.red} transparent opacity={0.3} side={THREE.DoubleSide} />
+        </mesh>
+      )}
+
+      {/* Crush-risk ring — simulated density past the band where movement becomes involuntary */}
+      {crush && (
+        <mesh ref={crushRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.535, 0]}>
+          <ringGeometry args={[ringOuter * 0.6, ringOuter * 0.8, 48]} />
+          <meshBasicMaterial color={band.color} transparent opacity={0.4} side={THREE.DoubleSide} />
         </mesh>
       )}
 
       {/* Selection base ring */}
       {isSelected && (
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.545, 0]}>
-          <ringGeometry args={[inset * 0.5, inset * 0.54, 48]} />
+          <ringGeometry args={[ringOuter * 1.04, ringOuter * 1.12, 48]} />
           <meshBasicMaterial color={NEO.ink} side={THREE.DoubleSide} />
         </mesh>
       )}
@@ -147,7 +180,8 @@ export default function ZoneTile({ zone }) {
           <div style={badgeStyle}>
             <span style={{ ...dotStyle, background: known ? color : UNKNOWN_COLOR }} />
             {zone.id} · {known ? `${zone.projected} @ HORIZON` : 'NO PROJECTION'}
-            <span style={{ color: NEO.grey }}>{known ? label : 'UNVERIFIED'}</span>
+            {zone.density != null && <span style={{ color: NEO.grey }}>{zone.density.toFixed(1)}/m² SIM</span>}
+            <span style={{ color: crush ? band.color : NEO.grey }}>{crush ? band.label : known ? label : 'UNVERIFIED'}</span>
           </div>
         </Html>
       )}

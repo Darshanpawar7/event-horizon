@@ -3,7 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { useVenueStore, selectObservation, isDemo } from '../../store/useVenueStore';
-import { CAMERA_MASTS } from '../../data/venueModel';
+import { useVenue } from '../../store/derived';
 import { NEO, MONO } from '../../theme';
 
 const MAST_HEIGHT = 6.4;
@@ -108,8 +108,9 @@ function CameraMast({ mast, active, state, onSelect }) {
   );
 }
 
-/** All venue camera masts, with the console's selected camera highlighted. */
+/** The venue's camera masts, with the console's selected camera highlighted. */
 export default function CameraMasts() {
+  const venue = useVenue();
   const visible = useVenueStore((state) => state.overlays.cameras);
   const cameraId = useVenueStore((state) => state.cameraId);
   const setCameraId = useVenueStore((state) => state.setCameraId);
@@ -117,21 +118,23 @@ export default function CameraMasts() {
   const demo = useVenueStore(isDemo);
   const scenario = useVenueStore((state) => state.scenario);
 
+  // Timeline scenarios keep a reference-like view; only the evidence states
+  // degrade it.
   const visibilityState = demo
     ? { visibility: 'degraded', camera: 'unverified', tracking: 'unverified' }[scenario] || 'reference-like'
     : observation?.visibility_status || 'unverified';
 
   // With no explicit selection the first mast stands in for "first available",
   // mirroring how the console resolves an empty camera selection.
-  const activeId = cameraId || CAMERA_MASTS[0].id;
+  const activeId = venue.cameras.some((mast) => mast.id === cameraId) ? cameraId : venue.cameras[0]?.id;
 
   if (!visible) return null;
 
   return (
     <group>
-      {CAMERA_MASTS.map((mast) => (
+      {venue.cameras.map((mast) => (
         <CameraMast
-          key={mast.id}
+          key={`${venue.id}-${mast.id}`}
           mast={mast}
           active={mast.id === activeId}
           state={mast.id === activeId ? visibilityState : 'reference-like'}
