@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 
@@ -81,6 +82,131 @@ function sampleVideos(directory) {
   };
 }
 
+/**
+ * Keeps the two heavy libraries in chunks of their own.
+ *
+ * three.js and React Three Fiber only run inside the twin, and recharts only
+ * inside the zone telemetry chart; both components are `lazy()` in App.jsx, so
+ * these chunks are fetched after the console has painted (and the charts one
+ * not until a zone is selected). Naming them also keeps their hashes stable
+ * across application changes, so a returning browser serves them from cache.
+ *
+ * Deliberately no catch-all `vendor` chunk: that would drag libraries used
+ * only by the lazy scene into the eager download. Anything unlisted is split
+ * by Rollup according to who actually imports it.
+ */
+const CHART_PACKAGES = new Set([
+  'recharts',
+  'recharts-scale',
+  'react-smooth',
+  '@reduxjs/toolkit',
+  'redux',
+  'react-redux',
+  'immer',
+  'reselect',
+  'es-toolkit',
+  'eventemitter3',
+  'decimal.js-light',
+  'internmap',
+  'delaunator',
+  'robust-predicates',
+  'fast-equals',
+]);
+
+function packageName(id) {
+  const match = /[\\/]node_modules[\\/](?:\.pnpm[\\/])?((?:@[^\\/]+[\\/])?[^\\/]+)/.exec(id);
+  return match ? match[1].replace('\\', '/') : '';
+}
+
+/**
+ * Everything the eager console needs from node_modules. Rollup hoists a
+ * module shared between a manual chunk and the entry *into the manual chunk*,
+ * which is how zustand once ended up inside the three.js chunk and dragged
+ * the whole of it onto the critical path. Pinning the eager libraries here
+ * keeps the three and charts chunks genuinely lazy.
+ */
+const CORE_PACKAGES = new Set([
+  'react',
+  'react-dom',
+  'scheduler',
+  'zustand',
+  'framer-motion',
+  'motion-dom',
+  'motion-utils',
+  'tslib',
+  'use-sync-external-store',
+]);
+
+function vendorChunk(id) {
+  // Vite's dynamic-import preload helper is a virtual module used by the
+  // entry and by lazy chunks alike; it belongs with the core for the same reason.
+  if (id.includes('vite/preload-helper')) return 'core';
+  if (!id.includes('node_modules')) return undefined;
+  const name = packageName(id);
+  if (CORE_PACKAGES.has(name)) return 'core';
+  if (name === 'three' || name === 'three-stdlib' || name === 'maath' || name.startsWith('@react-three/')) {
+    return 'three';
+  }
+  if (CHART_PACKAGES.has(name) || name.startsWith('d3-') || name.startsWith('victory-')) return 'charts';
+  return undefined;
+}
+
+/**
+ * Writes `.gz` and `.br` siblings for every text asset after the build, so a
+ * static server can hand the browser a pre-compressed file (nginx
+ * `gzip_static` / `brotli_static`, Caddy `precompressed`, Apache
+ * `MultiViews`) instead of compressing the same bytes on every request. The
+ * plain files stay in place for servers that do neither. Node's zlib ships
+ * both codecs, so this adds no dependency.
+ */
+const COMPRESSIBLE = new Set(['.js', '.css', '.html', '.svg', '.json', '.txt', '.webmanifest']);
+const MIN_COMPRESS_BYTES = 1024;
+
+function precompress() {
+  let outDir = 'dist';
+  return {
+    name: 'event-horizon-precompress',
+    apply: 'build',
+    configResolved(config) {
+      outDir = path.resolve(config.root, config.build.outDir);
+    },
+    closeBundle() {
+      const files = walk(outDir).filter(
+        (file) => COMPRESSIBLE.has(path.extname(file)) && fs.statSync(file).size >= MIN_COMPRESS_BYTES,
+      );
+      let raw = 0;
+      let gzipped = 0;
+      let brotlied = 0;
+      for (const file of files) {
+        const source = fs.readFileSync(file);
+        const gzip = zlib.gzipSync(source, { level: 9 });
+        const brotli = zlib.brotliCompressSync(source, {
+          params: {
+            [zlib.constants.BROTLI_PARAM_QUALITY]: 11,
+            [zlib.constants.BROTLI_PARAM_SIZE_HINT]: source.length,
+          },
+        });
+        fs.writeFileSync(`${file}.gz`, gzip);
+        fs.writeFileSync(`${file}.br`, brotli);
+        raw += source.length;
+        gzipped += gzip.length;
+        brotlied += brotli.length;
+      }
+      const kb = (bytes) => `${(bytes / 1024).toFixed(1)} kB`;
+      console.log(
+        `precompress: ${files.length} files · raw ${kb(raw)} · gzip ${kb(gzipped)} · brotli ${kb(brotlied)}`,
+      );
+    },
+  };
+}
+
+function walk(directory) {
+  return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(directory, entry.name);
+    return entry.isDirectory() ? walk(full) : [full];
+  });
+}
+
 // The dev server proxies /api to the Python backend so the browser only ever
 // talks to one origin. Restart after changing BACKEND_URL in .env.
 export default defineConfig(({ mode }) => {
@@ -88,7 +214,14 @@ export default defineConfig(({ mode }) => {
   const samples = env.SAMPLE_VIDEO_DIR || path.resolve(process.cwd(), '..', 'sample crowd videos');
 
   return {
-    plugins: [react(), sampleVideos(samples)],
+    plugins: [react(), sampleVideos(samples), precompress()],
+    build: {
+      rollupOptions: { output: { manualChunks: vendorChunk } },
+      // three.js alone minifies to well over the default 500 kB threshold. It
+      // is the one known exception and is lazy-loaded, so the warning would
+      // only be noise on every build.
+      chunkSizeWarningLimit: 1024,
+    },
     server: {
       port: 3000,
       proxy: {

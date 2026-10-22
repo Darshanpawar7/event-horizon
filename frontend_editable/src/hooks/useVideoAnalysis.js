@@ -64,7 +64,9 @@ export default function useVideoAnalysis(videoRef, sourceId) {
         frame = context.getImageData(0, 0, SAMPLE_WIDTH, SAMPLE_HEIGHT);
       } catch {
         // A cross-origin video taints the canvas. Report no analysis rather
-        // than a wrong one, and stop trying.
+        // than a wrong one, and stop sampling: every further tick would throw
+        // again and re-render the panel six times a second for nothing.
+        clearInterval(timer);
         setReading({ ...emptyReading(), status: 'UNAVAILABLE' });
         return;
       }
