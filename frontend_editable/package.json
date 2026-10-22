@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
-    "preview": "vite preview --host 127.0.0.1"
+    "preview": "vite preview --host 127.0.0.1",
+    "check:venues": "node scripts/venue_check.mjs 2",
+    "verify:console": "node scripts/verify_console.cjs http://127.0.0.1:4173 ./verify-shots chrome"
   },
   "dependencies": {
     "@react-three/drei": "~10.7.7",
@@ -20,6 +22,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.7.0",
+    "playwright-core": "^1.64.1",
     "vite": "^6.1.0"
   }
 }
