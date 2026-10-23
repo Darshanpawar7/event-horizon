@@ -320,8 +320,11 @@ What you see:
   lights, floodlights, street lamps, lit windows and neon, river water and haze.
 - **Rendering.** Ambient occlusion, bloom, ACES tone mapping and anti-aliasing through
   `@react-three/postprocessing`, loaded after the first frame. RENDER QUALITY in the twin
-  controls (or `?quality=low` in the URL) turns the effects off for weaker machines.
-  Every texture is drawn procedurally in the browser; nothing is downloaded.
+  controls is AUTO by default: it keeps the frame rate smooth by choosing between HIGH
+  (everything, full resolution), MED (no ambient occlusion, one canvas pixel per screen
+  point, shadows refreshed twelve times a second) and LOW. `?quality=high`, `medium` or
+  `low` in the URL pins one. Every texture is drawn procedurally in the browser; nothing
+  is downloaded.
 - **People, not markers.** Instanced human figures in clothing that fits the event (red
   and gold the day after the title, pilgrims' saffron and white shawls, Halloween
   costumes, a summer rave). They walk, slow to a shuffle, sway and compress as density
@@ -336,6 +339,39 @@ What you see:
   the view are drawn in muted colours and never enter a count. Held queues appear where
   they wait: on the footbridge, at the MG Road junction, upstream on the Akhara route, at
   the tunnel portals.
+
+Moving around:
+
+- **Mouse.** Drag to rotate; right-drag or Shift-drag to move across the ground; the wheel
+  zooms toward the pointer; double-click anywhere to fly there.
+- **Keys.** W A S D or the arrow keys glide across the ground, Q and E turn, + and − zoom,
+  Shift goes faster. 1 is the venue overview, 2 the incident close-up, 3 the plan view
+  straight down, O a slow orbit for presenting. The same four are under CAMERA in the
+  twin controls. Any drag or key ends a camera flight, so the view never fights the hand.
+- **Presenting.** `npm run demo` in `frontend_editable` builds the optimised console and
+  opens it at <http://127.0.0.1:4173>; it runs noticeably smoother than the development
+  server.
+
+Smooth on an ordinary laptop. Frames per second on the development machine (Intel Iris
+Xe integrated graphics, 125 % display scaling, vsync off so the headroom shows), with the
+timeline playing:
+
+| Venue | Before: HIGH, the old default | Now: AUTO, which settles on MED here |
+| --- | ---: | ---: |
+| Generic plaza | 20 | 98 |
+| New Delhi station | 14 | 100 |
+| Chinnaswamy gates | 19 | 96 |
+| Sangam nose | 19 | 90 |
+| Itaewon alley | 25 | 91 |
+| Love Parade ramp | 25 | 92 |
+
+Each zone's crowd is drawn as one mesh with one matrix per person and its clothes stored
+once; each venue's static structures merge into a few dozen draw calls (New Delhi went
+from about 1,060 per frame to about 130); night scenes keep five real lights and skip the
+moon's shadows; and quality changes never recompile shaders, so AUTO adjusts without a
+visible pause. HIGH stays available for screenshots and stronger GPUs; on this machine it
+draws about 20 to 26 frames a second. `npm run perf:scenes` repeats the measurement on
+any machine.
 
 ![New Delhi station reconstruction](docs/screenshots/13-reconstruction-ndls.png)
 
@@ -511,7 +547,8 @@ Allowed scenarios: `clear`, `tracking`, `visibility`, `camera`, `collective`, `s
 state, while the console plays the timeline itself and recognises them by `source_id`.
 
 `npm run build` produces `dist/`; serve it behind a reverse proxy that routes `/api` to
-the Python API. `vite preview` does **not** supply the API.
+the Python API. Locally, `npm run preview` and `npm run demo` reuse the dev server's
+proxy, so `/api` still reaches the API on 127.0.0.1:8000 (or `BACKEND_URL`).
 
 ### 2 · Live video dashboard
 
@@ -660,6 +697,8 @@ cd frontend_editable
 npm run check:venues        # builds every reconstruction and prints warning time, onset, lead and peaks
 npm run preview             # serve dist/ on 127.0.0.1:4173, then in another terminal:
 npm run verify:console      # drives installed Chrome headless through every venue; screenshots in verify-shots/
+npm run review:scenes       # every venue at T0, its FOCUS close-up and the counterfactual; review-shots/
+npm run perf:scenes         # frame rate, draw calls and stalls per venue on this machine's real GPU
 ```
 
 Verified on this checkout (Windows 11; a Python 3.12 virtual environment created with

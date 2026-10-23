@@ -87,8 +87,23 @@ exits label would stand in front of the crowd. Textures are procedural
 (`src/lib/textures.js`).
 
 Rendering: `PostFX.jsx` adds ambient occlusion, bloom, ACES tone mapping and SMAA via
-`@react-three/postprocessing`, in its own lazily loaded chunk. RENDER QUALITY in the twin
-controls, or `?quality=low` in the URL, switches it off.
+`@react-three/postprocessing`, in its own lazily loaded chunk. RENDER QUALITY defaults to
+AUTO: `QualityGovernor.jsx` measures the frame rate and steps between three tiers (high:
+everything at the screen's full resolution; medium: no ambient occlusion, 1×, shadows at 12 Hz;
+low: tone mapping only, 0.75×, shadows at 5 Hz). `?quality=high|medium|low` pins one.
+
+What keeps it smooth on an integrated GPU: `CrowdParticles.jsx` draws each zone's people
+as one instanced mesh of a merged figure (`src/lib/figures.js`) with one matrix per person
+and colours written once; `SceneryCrowd.jsx` places its muted figures once per venue;
+`StaticMerge.jsx` merges every static structure that shares a material into one mesh
+(mark anything animated `userData.dynamic`); night venues get five real lights
+(`LIGHT_BUDGET` in `Structures.jsx`) and no moon shadows; and the effect composer stays
+mounted on every tier, because removing it would recompile every material.
+
+Camera: `CameraRig.jsx` flies to venue views, FOCUS close-ups and requests from the
+CAMERA buttons and the double-click, and stops the moment the operator drags or presses
+a movement key. `CameraInput.jsx` adds W A S D / arrows, Q E, + −, Shift, the 1 2 3 O
+views (`src/data/cameraViews.js`) and double-click to fly.
 
 Two scripts keep the reconstructions honest. `npm run check:venues` runs every timeline
 in Node and prints when the projection warns, when the crowd reaches onset density, the
@@ -120,11 +135,14 @@ src/
   lib/crowdModel.js           cell-transmission crowd-flow model
   store/useVenueStore.js      state, polling, actions, pure derivations
   store/derived.js            memoised hooks over those derivations
-  components/digitalTwin/     VenueScene, VenuePlaza, Structures, ZoneTile, CrowdParticles,
-                              SceneryCrowd, IncidentBeacon, IncidentHud, TextSprite,
-                              CrowdFlow, CameraMasts, ExitGates, SceneEffects, PostFX,
-                              CameraRig, SignalOverlay, PitchGuide, OverlayPanel
+  components/digitalTwin/     VenueScene, VenuePlaza, StaticMerge, Structures, ZoneTile,
+                              CrowdParticles, SceneryCrowd, IncidentBeacon, IncidentHud,
+                              TextSprite, CrowdFlow, CameraMasts, ExitGates, SceneEffects,
+                              PostFX, QualityGovernor, CameraRig, CameraInput,
+                              SignalOverlay, PitchGuide, OverlayPanel
   lib/textures.js             procedural surface, sign and facade textures
+  lib/figures.js              the merged crowd figure, its material and matrix writer
+  data/cameraViews.js         overview, plan and incident views
   components/dashboard/       ForecastPanel, ScenarioControls, TimelineControls,
                               IncidentBrief, ZoneTelemetry, ZoneEmptyState, CameraPanel,
                               SourcePicker, VideoStage, ResponsePanel, AssistantPanel,
