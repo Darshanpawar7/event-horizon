@@ -1,7 +1,8 @@
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { useZones, useVenue } from '../../store/derived';
 import ZoneTile from './ZoneTile';
 import Structures, { GROUND_Y, Tree } from './Structures';
+import StaticMerge from './StaticMerge';
 import { asphalt, surfaceTexture } from '../../lib/textures';
 import { NEO } from '../../theme';
 
@@ -9,10 +10,26 @@ import { NEO } from '../../theme';
  * The venue floor: a textured ground plane, the walkways between zones when
  * the venue has them, foliage, the venue's structures and the 3×3 analysed
  * grid drawn as heat overlays. Every dimension comes from the active venue.
+ *
+ * Only the zone overlays change during playback. Everything else is one
+ * memoised, merged block, so the five-a-second timeline ticks re-render nine
+ * tiles instead of a station's worth of meshes.
  */
 export default function VenuePlaza() {
-  const venue = useVenue();
   const zones = useZones();
+  return (
+    <group>
+      <StaticVenue />
+      {/* Analysed zone grid, drawn over the floor */}
+      {zones.map((zone) => (
+        <ZoneTile key={zone.id} zone={zone} />
+      ))}
+    </group>
+  );
+}
+
+const StaticVenue = memo(function StaticVenue() {
+  const venue = useVenue();
 
   const pitchX = venue.cell.width + venue.gap.x;
   const pitchZ = venue.cell.depth + venue.gap.z;
@@ -50,9 +67,14 @@ export default function VenuePlaza() {
   const walkwayMap = useMemo(() => asphalt([2, edgeZ / 3]), [edgeZ]);
 
   return (
-    <group>
-      {/* Ground plane */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, GROUND_Y + (ground.y ?? 0) - 0.005, 0]} receiveShadow>
+    <StaticMerge key={venue.id}>
+      {/* Ground plane; the camera's double-click lands on it */}
+      <mesh
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, GROUND_Y + (ground.y ?? 0) - 0.005, 0]}
+        receiveShadow
+        userData={{ noMerge: true, pickable: true }}
+      >
         <planeGeometry args={[groundSize, groundSize]} />
         <meshStandardMaterial color={ground.color || NEO.ground} map={groundMap} roughness={1.0} metalness={0.0} />
       </mesh>
@@ -93,14 +115,9 @@ export default function VenuePlaza() {
 
       <Structures />
 
-      {/* Analysed zone grid, drawn over the floor */}
-      {zones.map((zone) => (
-        <ZoneTile key={zone.id} zone={zone} />
-      ))}
-
       {trees.map(([x, , z], index) => (
         <Tree key={`tree-${index}`} item={{ x, z, scale: 0.55 }} />
       ))}
-    </group>
+    </StaticMerge>
   );
-}
+});

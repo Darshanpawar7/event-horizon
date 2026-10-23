@@ -37,11 +37,13 @@ function surface(item, fallbackRoughness = 0.95) {
 export default function Structures() {
   const venue = useVenue();
   const night = venue.lighting?.mode === 'night';
+  const lit = useMemo(() => chooseLights(venue), [venue]);
   return (
     <group>
-      {venue.structures.map((item, index) => (
-        <Structure key={item.id || `${item.type}-${index}`} item={item} night={night} />
-      ))}
+      {venue.structures.map((item, index) => {
+        const id = item.id || `${item.type}-${index}`;
+        return <Structure key={id} id={id} item={item} night={night} lit={lit} />;
+      })}
       {venue.labels.map((label) => (
         <TextSprite key={label.text} text={label.text} position={[label.x, GROUND_Y + (label.y ?? 2), label.z]} height={label.size ?? 1.1} />
       ))}
@@ -49,7 +51,33 @@ export default function Structures() {
   );
 }
 
-function Structure({ item, night }) {
+/**
+ * Real lights a night venue gets. Every pixel of every lit material pays for
+ * each light, so a station with twelve canopy lights ran at a third of the
+ * frame rate. Floodlights come first (they carry the scene), then the
+ * fixtures nearest the analysed region (`venue.lightFocus`, default the
+ * origin); every other luminaire still glows and blooms but lights nothing.
+ */
+const LIGHT_BUDGET = 5;
+
+function chooseLights(venue) {
+  if (venue.lighting?.mode !== 'night') return new Set();
+  const [fx, fz] = venue.lightFocus || [0, 0];
+  const fixtures = [];
+  venue.structures.forEach((item, index) => {
+    const id = item.id || `${item.type}-${index}`;
+    if (item.type === 'flood') fixtures.push({ key: id, x: item.x, z: item.z, rank: 0 });
+    else if (item.type === 'tower' || item.type === 'lamp') fixtures.push({ key: id, x: item.x, z: item.z, rank: 1 });
+    else if (item.type === 'canopy') {
+      for (const [lx, lz] of item.lights || []) fixtures.push({ key: `${id}:${lx}:${lz}`, x: lx, z: lz, rank: 1 });
+    }
+  });
+  const distance = (fixture) => Math.hypot(fixture.x - fx, fixture.z - fz);
+  fixtures.sort((a, b) => a.rank - b.rank || distance(a) - distance(b));
+  return new Set(fixtures.slice(0, LIGHT_BUDGET).map((fixture) => fixture.key));
+}
+
+function Structure({ id, item, night, lit }) {
   switch (item.type) {
     case 'plane':
       return (
@@ -103,9 +131,9 @@ function Structure({ item, night }) {
     case 'sign':
       return <Sign item={item} night={night} />;
     case 'lamp':
-      return <Lamp item={item} night={night} />;
+      return <Lamp item={item} night={night} lit={lit.has(id)} />;
     case 'flood':
-      return <Flood item={item} night={night} />;
+      return <Flood item={item} night={night} lit={lit.has(id)} />;
     case 'barrier':
       return <Barrier item={item} />;
     case 'fence':
@@ -129,7 +157,7 @@ function Structure({ item, night }) {
     case 'flag':
       return <Flag item={item} />;
     case 'tower':
-      return <Watchtower item={item} night={night} />;
+      return <Watchtower item={item} night={night} lit={lit.has(id)} />;
     case 'stage':
       return <Stage item={item} night={night} />;
     case 'forest':
@@ -177,7 +205,7 @@ function Structure({ item, night }) {
                 <boxGeometry args={[1.2, 0.1, 0.3]} />
                 <meshStandardMaterial color="#FFF7D6" emissive="#FFF2C2" emissiveIntensity={night ? 3 : 0.2} />
               </mesh>
-              {night && (
+              {night && lit.has(`${id}:${lx}:${lz}`) && (
                 <pointLight
                   position={[lx, GROUND_Y + item.y - 0.6, lz]}
                   color="#FFF0C9"
@@ -423,8 +451,8 @@ function Sign({ item, night }) {
   );
 }
 
-/** A street lamp: pole, arm, luminaire; the light itself only at night. */
-function Lamp({ item, night }) {
+/** A street lamp: pole, arm, luminaire; a real light only at night and within the light budget. */
+function Lamp({ item, night, lit }) {
   const h = item.height ?? 7;
   const colour = item.color || '#FFE4B5';
   return (
@@ -441,7 +469,7 @@ function Lamp({ item, night }) {
         <boxGeometry args={[0.9, 0.2, 0.4]} />
         <meshStandardMaterial color={colour} emissive={colour} emissiveIntensity={night ? 4 : 0.2} />
       </mesh>
-      {night && (
+      {night && lit && (
         <pointLight position={[1.4, h - 0.6, 0]} color={colour} intensity={item.intensity ?? 120} distance={item.distance ?? 30} decay={2} />
       )}
     </group>
@@ -449,7 +477,7 @@ function Lamp({ item, night }) {
 }
 
 /** A floodlight tower aimed at a point on the ground. */
-function Flood({ item, night }) {
+function Flood({ item, night, lit }) {
   const h = item.height ?? 18;
   const targetRef = useRef(null);
   const lightRef = useRef(null);
@@ -476,7 +504,7 @@ function Flood({ item, night }) {
         </mesh>
       ))}
       <object3D ref={targetRef} position={[item.target[0] - item.x, -GROUND_Y, item.target[1] - item.z]} />
-      {night && (
+      {night && lit && (
         <spotLight
           ref={lightRef}
           position={[0, h + 0.6, 0.4]}
@@ -812,7 +840,8 @@ function Flag({ item }) {
         <cylinderGeometry args={[0.04, 0.05, h, 6]} />
         <meshStandardMaterial color="#6B5B45" roughness={0.9} />
       </mesh>
-      <group ref={clothRef} position={[0, h - 0.5, 0]}>
+      {/* The cloth moves every frame, so it is kept out of the static merge. */}
+      <group ref={clothRef} position={[0, h - 0.5, 0]} userData={{ dynamic: true }}>
         <mesh position={[0.7, 0, 0]} castShadow>
           <planeGeometry args={[1.4, 0.9]} />
           <meshStandardMaterial color={item.color || '#F97316'} side={THREE.DoubleSide} roughness={0.9} />
@@ -823,7 +852,7 @@ function Flag({ item }) {
 }
 
 /** A police watchtower: four legs, a cabin and a searchlight that is lit at night. */
-function Watchtower({ item, night }) {
+function Watchtower({ item, night, lit }) {
   const h = item.height ?? 8;
   return (
     <group position={[item.x, GROUND_Y + (item.y ?? 0), item.z]} rotation={[0, item.rotationY ?? 0, 0]}>
@@ -850,7 +879,7 @@ function Watchtower({ item, night }) {
         <boxGeometry args={[3, 0.3, 3]} />
         <meshStandardMaterial color="#374151" roughness={0.8} />
       </mesh>
-      {night && <pointLight position={[0, h + 3, 0]} color="#F5F7FF" intensity={item.intensity ?? 260} distance={45} decay={2} />}
+      {night && lit && <pointLight position={[0, h + 3, 0]} color="#F5F7FF" intensity={item.intensity ?? 260} distance={45} decay={2} />}
     </group>
   );
 }
