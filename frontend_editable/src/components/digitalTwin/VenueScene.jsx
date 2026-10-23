@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { lazy, Suspense, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { useVenueStore, selectObservation, isDemo } from '../../store/useVenueStore';
@@ -8,14 +8,21 @@ import VenuePlaza from './VenuePlaza';
 import CameraMasts from './CameraMasts';
 import ExitGates from './ExitGates';
 import CrowdParticles from './CrowdParticles';
+import SceneryCrowd from './SceneryCrowd';
 import CrowdFlow from './CrowdFlow';
 import SceneEffects from './SceneEffects';
+import IncidentBeacon from './IncidentBeacon';
 import SignalOverlay from './SignalOverlay';
 import CameraRig from './CameraRig';
+import IncidentHud from './IncidentHud';
 import ViewControls from '../dashboard/ViewControls';
 import OverlayPanel from './OverlayPanel';
 import PitchGuide from './PitchGuide';
 import { NEO, MONO, HARD, DENSITY_BANDS } from '../../theme';
+
+// Ambient occlusion, bloom and tone mapping arrive after the scene has drawn
+// its first frames; until then the renderer's own ACES tone mapping applies.
+const PostFX = lazy(() => import('./PostFX'));
 
 const LEGEND = [
   { color: NEO.green, label: 'SPARSE' },
@@ -50,9 +57,10 @@ function UnstableView({ children }) {
 }
 
 /**
- * The 3D venue digital twin: the active venue's floor and structures, the
- * analysed zone grid, cameras, exits, crowd markers and movement corridors,
- * with floating operator overlays.
+ * The 3D venue digital twin: the active venue's floor, structures and
+ * lighting, the analysed zone grid as heat overlays, cameras, exits, the
+ * crowd and the scenery crowd outside the analysed region, movement
+ * corridors and the incident beacon, with floating operator overlays.
  */
 export default function VenueScene() {
   const venue = useVenue();
@@ -60,6 +68,7 @@ export default function VenueScene() {
   const observation = useVenueStore(selectObservation);
   const demo = useVenueStore(isDemo);
   const horizon = useVenueStore((state) => state.horizon);
+  const night = venue.lighting?.mode === 'night';
 
   const simulatedGrid = forecast.origin !== 'observed';
   const sourceLabel = demo
@@ -70,7 +79,7 @@ export default function VenueScene() {
   const initial = getVenue(DEFAULT_VENUE_ID).camera;
 
   return (
-    <div style={stageStyle}>
+    <div style={{ ...stageStyle, background: night ? '#070B16' : NEO.ground }}>
       <div style={{ position: 'absolute', top: 16, left: 16, zIndex: 10, pointerEvents: 'none' }}>
         <ViewControls />
       </div>
@@ -88,37 +97,43 @@ export default function VenueScene() {
         </div>
         <div style={{ fontSize: 12, fontWeight: 900, marginTop: 2 }}>{venue.name.toUpperCase()}</div>
         <div style={{ fontSize: 8, color: NEO.grey, marginTop: 2 }}>
-          {venue.incident ? `${venue.place} · ${venue.incident.date}` : venue.place}
+          {venue.incident ? `${venue.place} · ${venue.incident.date} · ${venue.incident.time}` : venue.place}
         </div>
       </div>
 
-      {/* 'percentage' = PCFShadowMap. three r184 deprecated the soft variant that the
-          bare `shadows` flag selects and logs a warning on every renderer creation.
-          Device pixel ratio is left at React Three Fiber's default so high-DPI
-          screens render at full resolution. */}
+      <IncidentHud />
+
       <Canvas
         shadows="percentage"
-        camera={{ position: initial.position, fov: 42 }}
+        camera={{ position: initial.position, fov: 42, near: 0.5, far: 1500 }}
         gl={{ antialias: true, alpha: false, powerPreference: 'high-performance' }}
       >
+        {/* 'percentage' = PCFShadowMap; three r184 deprecated the soft variant the
+            bare `shadows` flag selects. Device pixel ratio stays at React Three
+            Fiber's default so high-DPI screens render at full resolution. */}
         <SceneEffects />
         <UnstableView>
           <VenuePlaza />
           <CameraMasts />
           <ExitGates />
           <CrowdParticles />
+          <SceneryCrowd />
           <CrowdFlow />
+          <IncidentBeacon />
         </UnstableView>
         <OrbitControls
           makeDefault
           enableDamping
           dampingFactor={0.05}
           maxPolarAngle={Math.PI / 2 - 0.05}
-          minDistance={8}
-          maxDistance={220}
+          minDistance={6}
+          maxDistance={260}
           target={initial.target}
         />
         <CameraRig />
+        <Suspense fallback={null}>
+          <PostFX night={night} />
+        </Suspense>
       </Canvas>
 
       {/* Legend and provenance banner share one column so neither can cover
@@ -126,6 +141,7 @@ export default function VenueScene() {
       <div style={rightColumnStyle}>
         <OverlayPanel
           title={`Legend @ +${horizon}s`}
+          defaultOpen={false}
           badge={
             <span style={{ display: 'flex', gap: 3 }}>
               {LEGEND.slice(0, 4).map((entry) => (
@@ -145,7 +161,7 @@ export default function VenueScene() {
             {demo && (
               <>
                 <div style={{ ...legendCaptionStyle, marginTop: 8, borderTop: `1px solid ${NEO.line}`, paddingTop: 6 }}>
-                  CROWD · PERSONS/m² (SIMULATED, {venue.cellArea} m² CELLS)
+                  FLOOR HEAT · PERSONS/m² (SIMULATED, {venue.cellArea} m² CELLS)
                 </div>
                 {DENSITY_BANDS.map((band) => (
                   <div key={band.key} style={legendRowStyle}>
@@ -155,6 +171,9 @@ export default function VenueScene() {
                 ))}
               </>
             )}
+            <div style={{ ...legendCaptionStyle, marginTop: 8, borderTop: `1px solid ${NEO.line}`, paddingTop: 6 }}>
+              MUTED FIGURES · OUTSIDE THE ANALYSED REGION OR HELD OUTSIDE THE VIEW · NOT COUNTED
+            </div>
           </div>
         </OverlayPanel>
 
@@ -186,7 +205,6 @@ const stageStyle = {
   width: '100%',
   height: '100%',
   minHeight: '520px',
-  background: NEO.ground,
   overflow: 'hidden',
 };
 
