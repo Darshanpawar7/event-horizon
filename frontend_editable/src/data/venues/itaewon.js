@@ -9,9 +9,11 @@ import { egressFieldToward } from '../venueModel.js';
 
 const W = 1.1; // metres across the alley, per column — 3.3 m in all
 const D = 15; // metres along the alley, per row — 45 m in all
-const ASPHALT = '#C9C9C9';
-const HOTEL = '#B9AFA0';
-const SHOPS = '#A9B2BD';
+const RISE = 4.0; // the alley climbs about 4 m from Itaewon-ro to World Food Street
+const TOP = RISE; // World Food Street level above Itaewon-ro
+
+/** Floor height along the alley, for placing fixtures on the slope. */
+const floorAt = (z) => RISE * Math.min(1, Math.max(0, (22.5 - z) / 45));
 
 const venue = {
   id: 'itaewon',
@@ -33,76 +35,146 @@ const venue = {
     R3C2: 'Alley bottom · toward Itaewon-ro',
     R3C3: 'Alley bottom · shop side',
   },
-  // Steeply down into the alley from above Itaewon-ro; from the side the hotel block hides it.
-  camera: { position: [2, 32, 34], target: [0, 0, -2] },
-  ground: { color: ASPHALT, size: 140 },
+  // From above Itaewon-ro, looking up the alley the way most photographs of the
+  // night were taken. The camera stays inside the alley's 3.4 m width (x within
+  // ±1.7), so neither the hotel nor the bars can hide any part of the floor.
+  camera: { position: [1.5, 21, 52], target: [0, 2.2, 2] },
+  floor: { low: 22.5, high: -22.5, rise: RISE, xMin: -2.2, xMax: 2.2 },
+  lighting: {
+    mode: 'night',
+    background: '#05070F',
+    sun: [30, 60, 40],
+    sunColor: '#94A3C8',
+    sunIntensity: 0.25,
+    hemisphere: { sky: '#202A44', ground: '#2E2722', intensity: 0.5 },
+    ambient: 0.11,
+    fog: { color: '#0D1220', density: 0.006 },
+    exposure: 1.2,
+  },
+  ground: { color: '#4A4D52', size: 200, texture: 'asphalt', repeat: [36, 36] },
+  // A short beacon: the camera looks along the alley, so a tall one would stand
+  // in front of the crowd further up.
+  overlay: { columnMax: 4, beaconHeight: 12 },
+  // Close-ups for the FOCUS button, each looking up the slope along the alley's
+  // axis from a few storeys up, so the walls frame the crowd instead of hiding it.
+  views: {
+    R3C1: { position: [1.2, 10, 38], target: [0, 1.4, 14] },
+    R3C2: { position: [1.2, 10, 38], target: [0, 1.4, 14] },
+    R3C3: { position: [1.2, 10, 38], target: [0, 1.4, 14] },
+    R2C1: { position: [0.4, 11, 21], target: [0, 2.6, 0] },
+    R2C2: { position: [0.4, 11, 21], target: [0, 2.6, 0] },
+    R2C3: { position: [0.4, 11, 21], target: [0, 2.6, 0] },
+    R1C1: { position: [0.4, 13, 5], target: [0, 4.2, -15] },
+    R1C2: { position: [0.4, 13, 5], target: [0, 4.2, -15] },
+    R1C3: { position: [0.4, 13, 5], target: [0, 4.2, -15] },
+  },
+  crowd: {
+    // Halloween costumes: black, purple, orange, white and red.
+    palette: ['#111827', '#0F172A', '#4C1D95', '#7C3AED', '#EA580C', '#F97316', '#F3F4F6', '#B91C1C', '#1F2937', '#374151', '#065F46', '#111111', '#DB2777'],
+  },
   trees: false,
   structures: [
-    // Itaewon-ro, the main road at the bottom, and World Food Street at the top
-    { type: 'plane', x: 0, z: 34, w: 120, d: 20, color: '#8E9094', y: 0.01 },
-    { type: 'plane', x: 0, z: -31, w: 80, d: 10, color: '#B5B5B0', y: 0.01 },
-    // Hamilton Hotel block on the west, shops and bars on the east
-    { type: 'box', x: -8.2, z: -2, w: 13, h: 14, d: 48, color: HOTEL },
-    { type: 'box', x: -8.2, z: -2, w: 13.4, h: 0.5, d: 48.4, color: '#7F7468', y: 14 },
-    { type: 'box', x: 7.6, z: -8, w: 12, h: 9, d: 20, color: SHOPS },
-    { type: 'box', x: 7.6, z: 12, w: 12, h: 12, d: 18, color: '#9AA3B0' },
-    { type: 'box', x: 7.6, z: -26, w: 12, h: 7, d: 12, color: '#B0B7C0' },
-    // The temporary iron wall that narrowed the passage
-    { type: 'box', x: -1.85, z: -4, w: 0.25, h: 2.4, d: 10, color: '#4B5563' },
-    // Shop signs and a lamp post
-    { type: 'box', x: 1.8, z: 4, w: 0.3, h: 1.0, d: 2.4, color: '#FF6600', y: 3.6 },
-    { type: 'box', x: 1.8, z: -12, w: 0.3, h: 1.0, d: 2.4, color: '#8B5CF6', y: 4.2 },
-    { type: 'box', x: 2.3, z: 20, w: 0.2, h: 6, d: 0.2, color: '#374151' },
-    // Station exit 1 on the far side of Itaewon-ro
-    { type: 'box', x: -22, z: 42, w: 6, h: 3, d: 4, color: '#3A4046' },
+    // The alley floor, climbing toward World Food Street
+    { type: 'ramp', id: 'alley-floor', x: 0, z: 0, w: 3.4, length: 45, rise: RISE, axis: 'z', dir: -1, y: -0.15, texture: 'asphalt', repeat: [1, 12], color: '#8A8D92' },
+    // World Food Street a level higher, and Itaewon-ro with its pavements
+    { type: 'box', id: 'world-food-street', x: 0, z: -41.25, w: 140, h: TOP, d: 37.5, texture: 'plaza', repeat: [30, 8], color: '#8F8B84' },
+    { type: 'road', id: 'itaewon-ro', x: 0, z: 36, w: 16, d: 180, rotationY: Math.PI / 2, crossing: -14 },
+    { type: 'plane', id: 'north-pavement', x: 0, z: 25.25, w: 180, d: 5.5, y: 0.01, texture: 'plaza', repeat: [40, 2], color: '#A29E97' },
+    { type: 'plane', id: 'south-pavement', x: 0, z: 47, w: 180, d: 6, y: 0.01, texture: 'plaza', repeat: [40, 2], color: '#A29E97' },
+    // Hamilton Hotel on the west, the temporary iron wall, bars and shops on the east
+    { type: 'building', id: 'hamilton-hotel', x: -9.7, z: 0.5, w: 16, h: 24, d: 43, wall: '#B59F82', cols: 8, rows: 8, lit: 0.62, seed: 11, roof: '#5B5148' },
+    { type: 'sign', id: 'hotel-sign', text: 'HAMILTON HOTEL', x: -9.7, z: 22.1, y: 20.5, w: 12, h: 1.8, background: '#161616', color: '#F2E3B3' },
+    { type: 'box', id: 'iron-wall', x: -1.82, z: 0, w: 0.14, h: 2.9, d: 10, y: floorAt(0) - 0.3, color: '#4B5563', metalness: 0.5, roughness: 0.6 },
+    { type: 'building', id: 'bars-north', x: 6.2, z: -14, w: 9, h: 9, d: 16, wall: '#6D6A80', cols: 4, rows: 3, lit: 0.8, glow: '#FFB4E6', seed: 21 },
+    { type: 'building', id: 'bars-middle', x: 6.2, z: 3, w: 9, h: 12, d: 17, wall: '#585D66', cols: 4, rows: 4, lit: 0.7, seed: 22 },
+    { type: 'building', id: 'bars-south', x: 6.2, z: 17.5, w: 9, h: 10, d: 10, wall: '#7A6455', cols: 4, rows: 3, lit: 0.75, seed: 23 },
+    { type: 'sign', id: 'neon-bar', text: 'BAR', x: 1.62, z: -12, y: floorAt(-12) + 2.6, w: 2.2, h: 0.9, background: '#1B0B2E', color: '#FF4FD8', rotationY: -Math.PI / 2 },
+    { type: 'sign', id: 'neon-pub', text: 'PUB 24H', x: 1.62, z: 2, y: floorAt(2) + 2.6, w: 2.6, h: 0.8, background: '#04202A', color: '#22D3EE', rotationY: -Math.PI / 2 },
+    { type: 'sign', id: 'neon-halloween', text: 'HALLOWEEN', x: 1.62, z: 14, y: floorAt(14) + 2.6, w: 3.6, h: 0.9, background: '#1F0D02', color: '#FB923C', rotationY: -Math.PI / 2 },
+    // The surrounding blocks
+    { type: 'building', id: 'west-block', x: -32, z: 2, w: 28, h: 15, d: 40, wall: '#6B6460', cols: 10, rows: 5, lit: 0.55, seed: 31 },
+    { type: 'building', id: 'east-block', x: 23, z: 3, w: 24, h: 16, d: 38, wall: '#5D6470', cols: 8, rows: 5, lit: 0.6, seed: 32 },
+    { type: 'building', id: 'south-block-w', x: -24, z: 58, w: 30, h: 17, d: 12, wall: '#5C5F66', cols: 10, rows: 5, lit: 0.6, seed: 33 },
+    { type: 'building', id: 'south-block-e', x: 14, z: 58, w: 34, h: 21, d: 12, wall: '#4B5563', cols: 11, rows: 6, lit: 0.55, seed: 34 },
+    { type: 'building', id: 'north-block-w', x: -18, z: -44, w: 30, h: 12, d: 14, y: TOP, wall: '#6E6A62', cols: 10, rows: 4, lit: 0.7, seed: 35 },
+    { type: 'building', id: 'north-block-e', x: 16, z: -44, w: 28, h: 10, d: 14, y: TOP, wall: '#5F5A70', cols: 9, rows: 3, lit: 0.75, glow: '#FFC6A8', seed: 36 },
+    // Itaewon Station exit 1, beside the hotel
+    { type: 'box', id: 'exit-1', x: -10, z: 25.6, w: 4, h: 2.6, d: 3, color: '#2B2F36' },
+    { type: 'box', id: 'exit-1-canopy', x: -10, z: 25.6, w: 4.4, h: 0.15, d: 3.4, y: 2.6, color: '#9CC3F0', metalness: 0.3, roughness: 0.2 },
+    { type: 'sign', id: 'exit-1-sign', text: 'ITAEWON STN · EXIT 1', x: -10, z: 27.35, y: 3.25, w: 4.2, h: 0.6, background: '#9A5B13', color: '#FFFFFF' },
+    // Street lights, a light in the alley, a police car and a taxi on Itaewon-ro
+    { type: 'lamp', id: 'lamp-1', x: -30, z: 28.5, height: 8, rotationY: -Math.PI / 2, intensity: 140 },
+    { type: 'lamp', id: 'lamp-2', x: -6, z: 28.5, height: 8, rotationY: -Math.PI / 2, intensity: 140 },
+    { type: 'lamp', id: 'lamp-3', x: 14, z: 28.5, height: 8, rotationY: -Math.PI / 2, intensity: 140 },
+    { type: 'lamp', id: 'lamp-4', x: 34, z: 28.5, height: 8, rotationY: -Math.PI / 2, intensity: 140 },
+    { type: 'lamp', id: 'alley-lamp', x: 1.55, z: 6, y: floorAt(6), height: 4.5, rotationY: Math.PI, intensity: 80, distance: 16 },
+    { type: 'lamp', id: 'alley-lamp-upper', x: -1.55, z: -12, y: floorAt(-12), height: 4.5, rotationY: 0, intensity: 70, distance: 16 },
+    { type: 'vehicle', id: 'police-car', kind: 'police', x: 18, z: 33, rotationY: Math.PI / 2 },
+    { type: 'vehicle', id: 'taxi', kind: 'van', x: -24, z: 39, rotationY: Math.PI / 2, color: '#F59E0B' },
   ],
   labels: [
-    { text: 'ITAEWON-RO (MAIN ROAD)', x: 0, z: 40, y: 2.5 },
-    { text: 'WORLD FOOD STREET', x: 0, z: -34, y: 2.5 },
-    { text: 'HAMILTON HOTEL', x: -8, z: -2, y: 16 },
-    { text: 'IRON WALL NARROWING · 3.2 m', x: -4.5, z: -4, y: 4 },
-    { text: 'ITAEWON STATION EXIT 1', x: -22, z: 42, y: 5 },
+    { text: 'ITAEWON-RO', x: -40, z: 36, y: 2.5 },
+    { text: 'WORLD FOOD STREET', x: 0, z: -30, y: TOP + 3 },
+    { text: 'HAMILTON HOTEL', x: -9.7, z: 0.5, y: 26.5 },
+    { text: 'NARROWEST POINT · 3.2 m', x: -4.2, z: 0, y: 6 },
+    { text: 'ITAEWON STATION EXIT 1', x: -10, z: 25.6, y: 5.2 },
   ],
   cameras: [
-    { id: 'camera-1', label: 'CCTV 01', x: 2.2, z: -24, rotation: Math.PI, covers: ['R1C1', 'R1C2', 'R1C3', 'R2C2'] },
-    { id: 'camera-2', label: 'CCTV 02', x: 2.2, z: 24, rotation: 0, covers: ['R3C1', 'R3C2', 'R3C3', 'R2C2'] },
+    { id: 'camera-1', label: 'CCTV 01', x: 2.3, z: -23.5, y: TOP, rotation: 0, covers: ['R1C1', 'R1C2', 'R1C3', 'R2C2'] },
+    { id: 'camera-2', label: 'CCTV 02', x: 2.3, z: 24, rotation: Math.PI, covers: ['R3C1', 'R3C2', 'R3C3', 'R2C2'] },
   ],
   gates: [
-    { id: 'TOP', x: 0, z: -24.5, rotation: Math.PI, width: 3.3, zone: 'R1C2' },
-    { id: 'BOTTOM', x: 0, z: 24.5, rotation: 0, width: 3.3, zone: 'R3C2' },
+    { id: 'TOP', x: 0, z: -23.6, y: TOP, rotation: Math.PI, width: 3.3, zone: 'R1C2' },
+    { id: 'BOTTOM', x: 0, z: 23.6, rotation: 0, width: 3.3, zone: 'R3C2' },
   ],
   gateLine: null,
   gateLabel: 'ALLEY ENDS',
+  // Beside the alley mouth rather than over the alley itself.
+  gateLabelAt: [4.5, 7, 25.5],
   corridors: {
     inbound: [
-      [0, 1.4, -30],
-      [0, 2.6, -18],
-      [0, 2.4, -8],
-      [0, 2.2, 0],
+      [0, 5.6, -30],
+      [0, 4.9, -15],
+      [0, 4.0, -5],
+      [0, 3.5, 0],
     ],
     egress: [
-      [0, 2.2, 0],
-      [0, 2.6, 10],
+      [0, 3.5, 0],
+      [0, 2.7, 10],
       [0, 2.0, 20],
       [0, 1.4, 30],
     ],
     lateral: [
-      [-1.4, 1.8, -2],
-      [-0.5, 2.6, 0],
-      [0.5, 2.6, 0.5],
-      [1.4, 1.8, 2],
+      [-1.4, 3.2, -2],
+      [-0.5, 3.8, 0],
+      [0.5, 3.8, 0.5],
+      [1.4, 3.2, 2],
     ],
     reversal: [
       [0, 1.6, 28],
-      [0, 3.4, 14],
-      [0, 3.8, 0],
-      [0, 3.0, -16],
+      [0, 3.0, 14],
+      [0, 4.2, 0],
+      [0, 5.6, -16],
     ],
     sceneMotion: [
-      [-3, 5.5, 26],
-      [0, 6.0, 0],
-      [3, 5.5, -26],
+      [-3, 7, 26],
+      [0, 8, 0],
+      [3, 9, -26],
     ],
+  },
+  // People outside the analysed region, drawn muted and not counted
+  ambient: [
+    { x: -19, z: -28, w: 30, d: 7, y: TOP, count: 300 },
+    { x: 25, z: -28, w: 20, d: 7, y: TOP, count: 200 },
+    { x: -22, z: 25.3, w: 38, d: 4.6, count: 170 },
+    { x: 22, z: 25.3, w: 38, d: 4.6, count: 170 },
+    { x: 0, z: 47, w: 90, d: 5, count: 240 },
+  ],
+  // Where the model's held arrivals wait
+  holding: {
+    'bottom-entry': { x: 0, z: 33, w: 14, d: 8, front: '-z', label: 'ITAEWON-RO' },
+    // East of the alley top, so its label stays clear of the twin controls from the street camera.
+    'top-entry': { x: 8.5, z: -28.5, w: 12, d: 6, y: TOP, front: '-x', label: 'WORLD FOOD STREET' },
   },
   controlRoom: null,
   incident: {
@@ -136,7 +208,7 @@ const venue = {
       'Keep the bottom of the alley clear so the outflow has somewhere to go — the standard measure crowd-safety experts said would have prevented it.',
     ],
     caveats: [
-      'Three 1.1 m columns stand in for a passage reported as about 4 m wide and 3.2 m at the narrowest; the slope is described, not modelled.',
+      'Three 1.1 m columns stand in for a passage reported as about 4 m wide and 3.2 m at the narrowest. The slope is drawn as about 4 m over the 45 m alley (roughly 9 %); published descriptions of the gradient vary.',
       'Inflow rates are authored to reproduce a filling that in reality built over hours; the timeline covers the last thirty minutes.',
       'The investigation\'s findings concern policing and preparation; the console models only the crowd mechanics.',
     ],

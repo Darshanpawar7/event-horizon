@@ -9,10 +9,126 @@ import { egressFieldToward } from '../venueModel.js';
 
 const W = 3.5; // metres across the island platform, per column
 const D = 24; // metres along the platform, per row
-const FOB_Z = -18; // the footbridge deck crosses above the north row
-const CONCRETE = '#D9D4CC';
-const TRACK = '#4A4A4A';
-const CANOPY = '#8C8F94';
+const DECK = 7.2; // footbridge walking surface above platform level
+const FOB_Z = -18; // footbridge centre line
+const BED = -1.0; // track bed below platform level
+const LENGTH = 140; // platform length drawn
+
+/** Island and side platforms as [centre x, width]; 14/15 is the analysed island. */
+const PLATFORMS = [
+  [-19.9, 11.2], // 12/13
+  [0, 11.5], // 14/15
+  [18.6, 8.6], // 16, the side platform toward the Ajmeri Gate entrance
+];
+/** Track centre lines serving platforms 13, 14, 15 and 16, plus two yard lines. */
+const TRACKS = [-35.8, -30.6, -12.6, -7.4, 7.4, 12.6];
+/** Canopy runs either side of the footbridge and its stairs. */
+const CANOPY_RUNS = [
+  [-60, -20.5],
+  [-1.5, 60],
+];
+/** Canopies as [centre x, width, light positions along z]. */
+const CANOPIES = [
+  [0, 12.4, [-46, -30, 10, 30, 50]],
+  [-19.9, 12.0, [-40, 30]],
+  [18.6, 9.4, [-40, 30]],
+];
+/** Where the three stair flights reach the footbridge. */
+const STAIR_X = [-19.9, 0, 18.6];
+
+function platforms() {
+  const items = [];
+  for (const [x, w] of PLATFORMS) {
+    items.push({
+      type: 'box',
+      id: `platform-${x}`,
+      x,
+      z: 0,
+      w,
+      h: -BED,
+      d: LENGTH,
+      y: BED,
+      texture: 'platform',
+      repeat: [w / 2.5, LENGTH / 4],
+      color: '#C9C2B4',
+    });
+    // Yellow safety line half a metre in from each platform edge
+    for (const edge of [x - w / 2 + 0.55, x + w / 2 - 0.55]) {
+      items.push({ type: 'plane', id: `safety-${edge}`, x: edge, z: 0, w: 0.14, d: LENGTH, y: 0.012, color: '#E8B10A' });
+    }
+  }
+  for (const x of TRACKS) items.push({ type: 'rails', id: `track-${x}`, x, z: 0, length: LENGTH + 40, y: BED });
+  return items;
+}
+
+function canopies() {
+  const items = [];
+  for (const [x, w, lightZ] of CANOPIES) {
+    CANOPY_RUNS.forEach(([z0, z1], run) => {
+      const columns = [];
+      for (let z = z0 + 5; z < z1 - 2; z += 12) columns.push([x, z]);
+      items.push({
+        type: 'canopy',
+        id: `canopy-${x}-${run}`,
+        x,
+        z: (z0 + z1) / 2,
+        w,
+        d: z1 - z0,
+        y: 5.4,
+        color: '#737A84',
+        columns,
+        lights: lightZ.filter((z) => z > z0 && z < z1).map((z) => [x, z]),
+        lightIntensity: 95,
+        // The analysed island's roof is drawn translucent so its crowd stays visible.
+        opacity: x === 0 ? 0.28 : undefined,
+      });
+    });
+  }
+  return items;
+}
+
+function footbridge() {
+  const items = [
+    { type: 'box', id: 'fob-deck', x: 0, z: FOB_Z, w: 62, h: 0.6, d: 5.2, y: DECK - 0.6, texture: 'concrete', repeat: [12, 1], color: '#8C9097' },
+    { type: 'box', id: 'fob-wall-north', x: 0, z: FOB_Z - 2.5, w: 62, h: 1.2, d: 0.2, y: DECK, color: '#A3A8AF' },
+    {
+      type: 'canopy',
+      id: 'fob-roof',
+      x: 0,
+      z: FOB_Z,
+      w: 62,
+      d: 6,
+      y: DECK + 3.2,
+      color: '#5B616B',
+      columns: [],
+      lights: [
+        [-12, FOB_Z],
+        [12, FOB_Z],
+      ],
+      lightIntensity: 55,
+    },
+  ];
+  // South parapet, open where the three stair flights arrive
+  for (const [x0, x1] of [
+    [-31, -21.7],
+    [-18.1, -2],
+    [2, 16.8],
+    [20.4, 31],
+  ]) {
+    items.push({ type: 'box', id: `fob-wall-south-${x0}`, x: (x0 + x1) / 2, z: FOB_Z + 2.5, w: x1 - x0, h: 1.2, d: 0.2, y: DECK, color: '#A3A8AF' });
+  }
+  // Roof posts on the deck (clear of the stair openings) and piers down to the track bed
+  for (let x = -28; x <= 28; x += 8) {
+    items.push({ type: 'box', id: `fob-post-n-${x}`, x, z: FOB_Z - 2.5, w: 0.18, h: 3.2, d: 0.18, y: DECK, color: '#6B7079' });
+    if (STAIR_X.every((sx) => Math.abs(sx - x) > 2.5)) {
+      items.push({ type: 'box', id: `fob-post-s-${x}`, x, z: FOB_Z + 2.5, w: 0.18, h: 3.2, d: 0.18, y: DECK, color: '#6B7079' });
+    }
+  }
+  for (const x of [-27, -10, 10, 24]) {
+    items.push({ type: 'box', id: `fob-pier-${x}`, x, z: FOB_Z, w: 0.9, h: DECK - BED, d: 0.9, y: BED, texture: 'concrete', color: '#80858D' });
+  }
+  return items;
+}
 
 const venue = {
   id: 'ndls',
@@ -34,84 +150,115 @@ const venue = {
     R3C2: 'Platform centre · south',
     R3C3: 'Platform 15 edge · south',
   },
-  camera: { position: [-40, 30, 48], target: [0, 1, -2] },
-  ground: { color: '#BFBAB2', size: 160 },
+  camera: { position: [-30, 22, 34], target: [0, 2, -6] },
+  lighting: {
+    mode: 'night',
+    background: '#060A14',
+    sun: [-40, 60, 30],
+    sunColor: '#9FB3D9',
+    sunIntensity: 0.35,
+    hemisphere: { sky: '#22324F', ground: '#2E2922', intensity: 0.55 },
+    ambient: 0.12,
+    fog: { color: '#0E1422', density: 0.0055 },
+    exposure: 1.2,
+  },
+  ground: { color: '#55524B', size: 240, y: BED, texture: 'ballast', repeat: [60, 60] },
+  overlay: { columnMax: 4.4 },
+  // Close-up for the FOCUS button: the stair flight in profile, from above the platform 16
+  // track. Seen from the front, the two LED boards hang across the very spot that crushed;
+  // from the side they are edge-on and the people coming down into the crowd show clearly.
+  views: {
+    R2C2: { position: [22, 10, -1], target: [0, 2.4, -6] },
+  },
+  crowd: {
+    // Winter evening, pilgrims bound for the Kumbh: shawls, saris, saffron and dark wool.
+    palette: ['#7F1D1D', '#B91C1C', '#F97316', '#FDE68A', '#F5F5F4', '#57534E', '#44403C', '#1E3A8A', '#065F46', '#92400E', '#D97706', '#9CA3AF', '#1F2937', '#BE185D'],
+  },
   trees: false,
   structures: [
-    // Island platform 14/15 and its neighbours
-    { type: 'plane', x: 0, z: 0, w: 3 * W + 1, d: 110, color: CONCRETE, y: 0.01 },
-    { type: 'plane', x: -24, z: 0, w: 10, d: 110, color: '#CFCAC2', y: 0.01 }, // platforms 12/13
-    { type: 'plane', x: 24, z: 0, w: 10, d: 110, color: '#CFCAC2', y: 0.01 }, // platform 16
-    // Tracks either side
-    { type: 'plane', x: -9.5, z: 0, w: 7, d: 120, color: TRACK, y: -0.01 },
-    { type: 'plane', x: 9.5, z: 0, w: 7, d: 120, color: TRACK, y: -0.01 },
-    // Prayagraj Express standing at platform 14; platform 16 waiting for the Special
-    { type: 'train', x: -9.5, z: 6, length: 96, color: '#1F4E8C' },
-    // Platform canopy on columns
-    { type: 'box', x: 0, z: 0, w: 3 * W + 2, h: 0.3, d: 104, color: CANOPY, y: 5.6 },
-    ...[-45, -30, -15, 0, 15, 30, 45].flatMap((z) => [
-      { type: 'box', x: -5, z, w: 0.35, h: 5.6, d: 0.35, color: '#5B5F66' },
-      { type: 'box', x: 5, z, w: 0.35, h: 5.6, d: 0.35, color: '#5B5F66' },
-    ]),
-    // Foot-over-bridge deck crossing all platforms, with the stair flight down to R2C2
-    { type: 'box', x: 0, z: FOB_Z, w: 66, h: 0.5, d: 5, color: '#6B7079', y: 7.2 },
-    { type: 'box', x: 0, z: FOB_Z - 2.6, w: 66, h: 1.1, d: 0.15, color: '#9AA0A8', y: 7.7 },
-    { type: 'box', x: 0, z: FOB_Z + 2.6, w: 66, h: 1.1, d: 0.15, color: '#9AA0A8', y: 7.7 },
-    { type: 'ramp', x: 0, z: FOB_Z + 2.6 + 6, w: 5.6, length: 12, rise: 7.2, axis: 'z', dir: -1, color: '#7C828B' },
-    ...[-33, -22, 22, 33].map((x) => ({ type: 'box', x, z: FOB_Z, w: 0.6, h: 7.2, d: 0.6, color: '#5B5F66' })),
-    // Second footbridge further south, the route the Special's passengers were meant to take
-    { type: 'box', x: 0, z: 52, w: 66, h: 0.5, d: 5, color: '#6B7079', y: 7.2 },
-    { type: 'ramp', x: 0, z: 52 - 2.6 - 6, w: 5.6, length: 12, rise: 7.2, axis: 'z', dir: 1, color: '#7C828B' },
+    ...platforms(),
+    ...canopies(),
+    ...footbridge(),
+    // Stair flights from the footbridge. The one onto 14/15 is where the crush happened.
+    { type: 'stairs', id: 'stairs-14-15', x: 0, z: -8.75, w: 4.0, run: 13.5, rise: DECK, steps: 42, dir: -1, color: '#9A9EA5', parapet: true, walkable: true, zones: ['R2C2'] },
+    { type: 'stairs', id: 'stairs-12-13', x: -19.9, z: -8.75, w: 3.6, run: 13.5, rise: DECK, steps: 42, dir: -1, color: '#9A9EA5', parapet: true, walkable: true },
+    { type: 'stairs', id: 'stairs-16', x: 18.6, z: -8.75, w: 3.6, run: 13.5, rise: DECK, steps: 42, dir: -1, color: '#9A9EA5', parapet: true, walkable: true },
+    // The Prayagraj Express standing at platform 14; platform 16 waits for the Special
+    { type: 'train', id: 'prayagraj-express', x: -7.4, z: 4, length: 110, y: BED, color: '#1D4F8F' },
+    // Station building on the Ajmeri Gate side
+    { type: 'building', id: 'ajmeri-gate-block', x: 34, z: 0, w: 18, h: 14, d: 96, y: BED, wall: '#B9876A', cols: 24, rows: 4, lit: 0.6, seed: 41, roof: '#6B4E3D' },
+    // Signage: the yellow station board, platform numbers and the two near-identical train boards
+    { type: 'sign', id: 'name-board-s', text: 'नई दिल्ली  NEW DELHI', x: 0, z: 40, y: 3.4, w: 7.5, h: 1.3, background: '#F2C200', color: '#111111' },
+    { type: 'sign', id: 'name-board-n', text: 'नई दिल्ली  NEW DELHI', x: 0, z: -44, y: 3.4, w: 7.5, h: 1.3, background: '#F2C200', color: '#111111', rotationY: Math.PI },
+    { type: 'sign', id: 'pf-14', text: '14', x: -3.6, z: 16, y: 4.6, w: 1.2, h: 0.9, background: '#0B3D91', color: '#FFFFFF' },
+    { type: 'sign', id: 'pf-15', text: '15', x: 3.6, z: 16, y: 4.6, w: 1.2, h: 0.9, background: '#0B3D91', color: '#FFFFFF' },
+    { type: 'sign', id: 'pf-16', text: '16', x: 18.6, z: 16, y: 4.6, w: 1.2, h: 0.9, background: '#0B3D91', color: '#FFFFFF' },
+    { type: 'sign', id: 'led-express', text: 'PRAYAGRAJ EXPRESS  →  PF 14', x: 0, z: 0.4, y: 4.7, w: 6.6, h: 0.62, background: '#090909', color: '#FF8A1F' },
+    { type: 'sign', id: 'led-special', text: 'PRAYAGRAJ SPECIAL  →  PF 16', x: 0, z: 0.4, y: 4.0, w: 6.6, h: 0.62, background: '#090909', color: '#FF8A1F' },
+    { type: 'lamp', id: 'stair-lamp', x: 2.6, z: -1.5, height: 5, rotationY: Math.PI, intensity: 50, distance: 18 },
   ],
   labels: [
-    { text: 'PLATFORM 14 · PRAYAGRAJ EXPRESS', x: -7, z: -40, y: 5 },
-    { text: 'PLATFORM 15', x: 7, z: -40, y: 2.4 },
-    { text: 'FOOT-OVER-BRIDGE', x: 0, z: FOB_Z, y: 10 },
-    { text: 'PLATFORM 16 · "PRAYAGRAJ SPECIAL"', x: 24, z: -30, y: 2.4 },
-    { text: 'SOUTH FOOTBRIDGE', x: 0, z: 52, y: 10 },
+    { text: 'PLATFORM 14 · PRAYAGRAJ EXPRESS STANDING', x: -7.4, z: -56, y: 6.5 },
+    { text: 'PLATFORM 16 · "PRAYAGRAJ SPECIAL" EXPECTED', x: 18.6, z: -56, y: 4 },
+    { text: 'FOOTBRIDGE STAIRS TO PF 14/15 · CRUSH SITE', x: 0, z: -9, y: 10.5 },
+    { text: 'FOOT-OVER-BRIDGE', x: -22, z: FOB_Z, y: 12 },
   ],
   cameras: [
-    { id: 'camera-1', label: 'CAM 01', x: 0, z: -46, rotation: Math.PI, covers: ['R1C1', 'R1C2', 'R1C3', 'R2C2'] },
-    { id: 'camera-2', label: 'CAM 02', x: 0, z: 46, rotation: 0, covers: ['R3C1', 'R3C2', 'R3C3', 'R2C2'] },
+    { id: 'camera-1', label: 'CAM 01', x: 4.6, z: -64, rotation: 0, covers: ['R1C1', 'R1C2', 'R1C3', 'R2C2'] },
+    { id: 'camera-2', label: 'CAM 02', x: -4.6, z: 64, rotation: Math.PI, covers: ['R3C1', 'R3C2', 'R3C3', 'R2C2'] },
   ],
   gates: [
-    { id: 'STAIR-A', x: -1.5, z: FOB_Z + 2.6 + 12.5, rotation: Math.PI, width: 2.8, zone: 'R2C2' },
-    { id: 'STAIR-B', x: 1.5, z: FOB_Z + 2.6 + 12.5, rotation: Math.PI, width: 2.8, zone: 'R2C2' },
+    { id: 'STAIR-FOOT-W', x: -1.1, z: -1.2, rotation: 0, width: 1.8, zone: 'R2C2' },
+    { id: 'STAIR-FOOT-E', x: 1.1, z: -1.2, rotation: 0, width: 1.8, zone: 'R2C2' },
   ],
   gateLine: null,
   gateLabel: 'FOOTBRIDGE STAIRS',
   corridors: {
     inbound: [
       [0, 1.6, 40],
-      [0, 3.2, 24],
-      [0, 2.8, 12],
+      [0, 3.0, 24],
+      [0, 2.8, 10],
       [0, 2.4, 0],
     ],
     egress: [
       [0, 2.4, 0],
-      [0, 3.4, -6],
-      [0, 6.0, -12],
-      [0, 8.4, -18],
+      [0, 4.5, -6],
+      [0, 7.5, -12],
+      [0, DECK + 1.4, -18],
     ],
     lateral: [
       [-4.5, 2.2, 0],
-      [-1.5, 3.4, 0.4],
-      [1.5, 3.4, -0.4],
+      [-1.5, 3.0, 0.4],
+      [1.5, 3.0, -0.4],
       [4.5, 2.2, 0],
     ],
     reversal: [
-      [0, 8.6, -20],
-      [0, 6.2, -10],
-      [0, 4.0, 2],
-      [0, 3.0, 14],
+      [0, DECK + 1.6, -20],
+      [0, 7.0, -12],
+      [0, 4.0, -4],
+      [0, 3.0, 8],
     ],
     sceneMotion: [
-      [-5, 6.5, 30],
-      [0, 7.0, 0],
-      [5, 6.5, -30],
+      [-5, 4.4, 30],
+      [0, 4.6, 0],
+      [5, 4.4, -30],
     ],
   },
-  controlRoom: [-26, -60],
+  // People outside the analysed region, drawn muted and not counted
+  ambient: [
+    { x: 0, z: -48, w: 10, d: 20, count: 190, heading: 0, spread: 2.5 },
+    { x: 0, z: 47, w: 10, d: 20, count: 200, heading: Math.PI, spread: 2.5 },
+    { x: 18.6, z: 2, w: 7.4, d: 100, count: 650 },
+    { x: -19.9, z: 2, w: 10, d: 100, count: 600 },
+    { x: 0, z: FOB_Z, w: 54, d: 4.2, y: DECK, count: 200 },
+  ],
+  // Where the model's held arrivals wait
+  holding: {
+    'fob-descent': { x: -9, z: FOB_Z, w: 13, d: 4.2, y: DECK, front: '+x', label: 'ON THE FOOTBRIDGE' },
+    'south-platform': { x: 0, z: 64, w: 10, d: 10, front: '-z', label: 'PLATFORM ENTRY (SOUTH)' },
+    'north-platform': { x: 0, z: -64, w: 10, d: 10, front: '+z', label: 'PLATFORM ENTRY (NORTH)' },
+  },
+  controlRoom: null,
   incident: {
     date: '15 February 2025',
     time: '≈ 21:15–21:30 IST',

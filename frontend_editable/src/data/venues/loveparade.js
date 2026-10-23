@@ -9,8 +9,37 @@ import { egressFieldToward } from '../venueModel.js';
 
 const W = 8; // metres across the ramp, per column — 24 m in all
 const D = 16; // metres along the ramp, per row
-const GRAVEL = '#D5CFC4';
-const CONCRETE = '#9EA3A8';
+const RISE = 5; // the ramp climbs about 5 m from the tunnel level to the festival ground
+const TUNNEL_Y = 7.2; // clearance of the road tunnel under the railway
+
+/** Trees on the railway embankment south of the plateau, as [x, z, scale]. */
+const EMBANKMENT_TREES = (() => {
+  const trees = [];
+  let seed = 5;
+  const rand = () => {
+    seed = (seed * 16807) % 2147483647;
+    return seed / 2147483647;
+  };
+  for (let x = -36; x <= 36; x += 6) {
+    for (const z of [50, 58, 66]) trees.push([x + (rand() - 0.5) * 3, z + (rand() - 0.5) * 3, 0.9 + rand() * 0.6]);
+  }
+  return trees;
+})();
+
+/** One half of the Karl-Lehr-Strasse road tunnel, from the ramp foot outward. */
+function tunnel(name, side) {
+  const x = side * 42;
+  return [
+    { type: 'plane', id: `tunnel-${name}-road`, x, z: 0, w: 58, d: 18, y: 0.01, texture: 'asphalt', repeat: [10, 3], color: '#7C7E82' },
+    { type: 'box', id: `tunnel-${name}-wall-n`, x, z: -9.5, w: 58, h: TUNNEL_Y, d: 1, texture: 'concrete', repeat: [10, 1], color: '#9C9A93' },
+    { type: 'box', id: `tunnel-${name}-wall-s`, x, z: 9.5, w: 58, h: TUNNEL_Y, d: 1, texture: 'concrete', repeat: [10, 1], color: '#9C9A93' },
+    { type: 'box', id: `tunnel-${name}-roof`, x, z: 0, w: 58, h: 1.2, d: 20, y: TUNNEL_Y, texture: 'concrete', repeat: [10, 3], color: '#8F8D86' },
+    { type: 'box', id: `tunnel-${name}-lights`, x, z: 0, w: 50, h: 0.08, d: 0.4, y: TUNNEL_Y - 0.1, color: '#FFB25E', emissive: '#FFB25E', emissiveIntensity: 2.5, castShadow: false },
+    { type: 'box', id: `tunnel-${name}-embankment`, x, z: 0, w: 58, h: 1.6, d: 28, y: TUNNEL_Y + 1.2, texture: 'gravel', repeat: [10, 4], color: '#6B665C' },
+    { type: 'rails', id: `railway-${name}-1`, x, z: -3.5, length: 58, y: TUNNEL_Y + 2.8, rotationY: Math.PI / 2 },
+    { type: 'rails', id: `railway-${name}-2`, x, z: 3.5, length: 58, y: TUNNEL_Y + 2.8, rotationY: Math.PI / 2 },
+  ];
+}
 
 const venue = {
   id: 'loveparade',
@@ -32,85 +61,122 @@ const venue = {
     R3C2: 'South plateau · stairs and lamp post',
     R3C3: 'South plateau · east fence',
   },
-  camera: { position: [-44, 34, 50], target: [0, 2, -4] },
-  ground: { color: GRAVEL, size: 180 },
+  camera: { position: [-46, 36, 52], target: [0, 2, -6] },
+  floor: { low: -8, high: -52, rise: RISE, xMin: -12.6, xMax: 12.6 },
+  lighting: {
+    mode: 'day',
+    sun: [-60, 50, 45],
+    sunColor: '#FFE9C7',
+    sunIntensity: 2.5,
+    hemisphere: { sky: '#BFD8F2', ground: '#8B806E', intensity: 0.9 },
+    ambient: 0.22,
+    fog: { color: '#D9E1E8', density: 0.0017 },
+    sky: { turbidity: 4, rayleigh: 1.8, mieCoefficient: 0.004, mieDirectionalG: 0.82 },
+  },
+  ground: { color: '#8C877C', texture: 'gravel', size: 260, repeat: [50, 50] },
+  overlay: { columnMax: 7 },
+  crowd: {
+    // A summer rave: white, neon pink, lime, cyan, orange and black.
+    palette: ['#F3F4F6', '#EC4899', '#A3E635', '#111827', '#3B82F6', '#F97316', '#FDE047', '#6B7280', '#22D3EE', '#DC2626', '#FFFFFF', '#1F2937'],
+  },
   trees: false,
   structures: [
-    // Retaining walls either side of the ramp and plateau
-    { type: 'box', x: -14.5, z: 0, w: 5, h: 7, d: 70, color: CONCRETE },
-    { type: 'box', x: 14.5, z: 0, w: 5, h: 7, d: 70, color: CONCRETE },
-    // The ramp itself, rising north to the festival ground on the old freight yard
-    { type: 'ramp', x: 0, z: -34, w: 24, length: 36, rise: 7, axis: 'z', dir: -1, color: '#B9B3A8' },
-    { type: 'plane', x: 0, z: -75, w: 120, d: 50, color: '#CFC7B8', y: 7 },
-    // Access tunnels under the railway, entering the ramp foot from west and east
-    { type: 'box', x: -30, z: 0, w: 28, h: 7.5, d: 20, color: '#7A7F86', y: 0 },
-    { type: 'box', x: 30, z: 0, w: 28, h: 7.5, d: 20, color: '#7A7F86', y: 0 },
-    { type: 'box', x: -30, z: 0, w: 27, h: 6, d: 16, color: '#1F2328', y: 0.2 },
-    { type: 'box', x: 30, z: 0, w: 27, h: 6, d: 16, color: '#1F2328', y: 0.2 },
-    // Railway embankment over the tunnels
-    { type: 'box', x: -30, z: 0, w: 28, h: 1.2, d: 26, color: '#6B6E72', y: 7.5 },
-    { type: 'box', x: 30, z: 0, w: 28, h: 1.2, d: 26, color: '#6B6E72', y: 7.5 },
-    // South fence, the stairs and the lamp post people climbed
-    { type: 'box', x: 0, z: 25, w: 26, h: 2.2, d: 0.2, color: '#9CA3AF' },
-    { type: 'ramp', x: -9, z: 25, w: 3, length: 6, rise: 4, axis: 'z', dir: 1, color: '#6B7079' },
-    { type: 'box', x: 6, z: 23, w: 0.3, h: 9, d: 0.3, color: '#374151' },
-    // Police cordon line at the top of the ramp
-    ...[-9, -3, 3, 9].map((x) => ({ type: 'box', x, z: -52, w: 4, h: 1.1, d: 0.15, color: '#D8D8D8', y: 7 })),
-    // Containers used as a barrier line on the plateau
-    { type: 'box', x: -11, z: 14, w: 6, h: 2.6, d: 2.4, color: '#1F4E8C' },
-    { type: 'box', x: 11, z: 14, w: 6, h: 2.6, d: 2.4, color: '#B91C1C' },
+    // Ramp foot and south plateau at tunnel level
+    { type: 'plane', id: 'ramp-foot', x: 0, z: 8, w: 26, d: 32, y: 0.01, texture: 'asphalt', repeat: [5, 6], color: '#8E8C86' },
+    // The ramp, the only way up to the festival ground, between high retaining walls
+    { type: 'ramp', id: 'ramp', x: 0, z: -30, w: 26, length: 44, rise: RISE, axis: 'z', dir: -1, y: -0.15, texture: 'asphalt', repeat: [5, 9], color: '#8E8C86' },
+    { type: 'box', id: 'ramp-wall-west', x: -13.6, z: -31, w: 1.2, h: 7.5, d: 42, texture: 'concrete', repeat: [8, 2], color: '#A7A39A' },
+    { type: 'box', id: 'ramp-wall-east', x: 13.6, z: -31, w: 1.2, h: 7.5, d: 42, texture: 'concrete', repeat: [8, 2], color: '#A7A39A' },
+    // Festival ground on the former freight yard
+    { type: 'box', id: 'festival-ground', x: 0, z: -100, w: 240, h: RISE, d: 96, texture: 'gravel', repeat: [40, 16], color: '#A39C8D' },
+    // The road tunnel under the railway, entering the ramp foot from west and east
+    ...tunnel('west', -1),
+    ...tunnel('east', 1),
+    // South plateau: fence, embankment, the narrow staircase and the lamp post
+    { type: 'fence', id: 'plateau-fence', x: 3.5, z: 26, length: 19, height: 2 },
+    { type: 'stairs', id: 'narrow-staircase', x: -9.5, z: 30.5, w: 2.2, run: 9, rise: 6, steps: 30, dir: 1, color: '#7C8088', parapet: true, walkable: true },
+    { type: 'ramp', id: 'embankment-slope', x: 3, z: 30.5, w: 20, length: 9, rise: 6, axis: 'z', dir: 1, texture: 'grass', repeat: [4, 2], color: '#6F8F55' },
+    { type: 'ramp', id: 'embankment-slope-west', x: -11.9, z: 30.5, w: 2.2, length: 9, rise: 6, axis: 'z', dir: 1, texture: 'grass', repeat: [1, 2], color: '#6F8F55' },
+    { type: 'box', id: 'embankment', x: 0, z: 52.5, w: 80, h: 6, d: 35, texture: 'grass', repeat: [16, 7], color: '#6F8F55' },
+    { type: 'forest', id: 'embankment-trees', y: 6, trees: EMBANKMENT_TREES },
+    { type: 'lamp', id: 'lamp-post', x: 6, z: 22, height: 9, rotationY: Math.PI },
+    // Police cordon at the top of the ramp, floats and a stage on the ground
+    { type: 'barrier', id: 'cordon', x: 0, z: -52.6, y: RISE, length: 24, color: '#E5E7EB' },
+    { type: 'vehicle', id: 'police-west', kind: 'police', x: -18, z: -58, y: RISE, rotationY: 0 },
+    { type: 'vehicle', id: 'police-east', kind: 'police', x: 18, z: -58, y: RISE, rotationY: 0 },
+    { type: 'stage', id: 'stage', x: -46, z: -122, y: RISE, w: 26, d: 10 },
+    { type: 'vehicle', id: 'float-1', kind: 'bus', x: 24, z: -92, y: RISE, rotationY: Math.PI / 2, color: '#EC4899' },
+    { type: 'vehicle', id: 'float-2', kind: 'bus', x: 52, z: -114, y: RISE, rotationY: 0.4, color: '#22D3EE' },
+    { type: 'flag', id: 'flag-west', x: -20, z: -55, y: RISE, color: '#EC4899' },
+    { type: 'flag', id: 'flag-east', x: 20, z: -55, y: RISE, color: '#A3E635' },
   ],
   labels: [
-    { text: 'FESTIVAL GROUND', x: 0, z: -70, y: 10 },
-    { text: 'RAMP (THE ONLY WAY IN OR OUT)', x: 0, z: -34, y: 9 },
-    { text: 'WEST TUNNEL', x: -30, z: -14, y: 10 },
-    { text: 'EAST TUNNEL', x: 30, z: -14, y: 10 },
-    { text: 'POLICE CORDON', x: 0, z: -52, y: 10 },
-    { text: 'STAIRS AND LAMP POST', x: -4, z: 28, y: 5 },
+    { text: 'FESTIVAL GROUND (FORMER FREIGHT YARD)', x: 0, z: -96, y: RISE + 6 },
+    { text: 'RAMP — THE ONE WAY IN AND OUT', x: 0, z: -36, y: 9 },
+    { text: 'TUNNEL (WEST)', x: -34, z: 0, y: 12.5 },
+    { text: 'TUNNEL (EAST)', x: 34, z: 0, y: 12.5 },
+    { text: 'POLICE CORDON', x: 0, z: -53, y: RISE + 3.5 },
+    { text: 'NARROW STAIRCASE', x: -9.5, z: 30, y: 8.5 },
+    { text: 'LAMP POST', x: 6, z: 22, y: 10.5 },
   ],
   cameras: [
-    { id: 'camera-1', label: 'CAM 01', x: -12, z: -22, rotation: Math.PI * 0.75, covers: ['R1C1', 'R1C2', 'R2C1', 'R2C2'] },
-    { id: 'camera-2', label: 'CAM 02', x: 12, z: 22, rotation: -Math.PI * 0.25, covers: ['R3C2', 'R3C3', 'R2C3', 'R2C2'] },
+    { id: 'camera-1', label: 'CAM 01', x: -12.4, z: -20, y: 1.4, rotation: 0.6, covers: ['R1C1', 'R1C2', 'R2C1', 'R2C2'] },
+    { id: 'camera-2', label: 'CAM 02', x: 12.4, z: 22, rotation: Math.PI + 0.6, covers: ['R3C2', 'R3C3', 'R2C3', 'R2C2'] },
   ],
   gates: [
-    { id: 'RAMP-TOP', x: 0, z: -52, rotation: Math.PI, width: 12, zone: 'R1C2' },
-    { id: 'WEST-TUNNEL', x: -17, z: 0, rotation: Math.PI / 2, width: 6, zone: 'R2C1' },
-    { id: 'EAST-TUNNEL', x: 17, z: 0, rotation: -Math.PI / 2, width: 6, zone: 'R2C3' },
+    { id: 'RAMP-TOP', x: 0, z: -52, y: RISE, rotation: Math.PI, width: 12, zone: 'R1C2' },
+    { id: 'WEST-TUNNEL', x: -12.6, z: 0, rotation: Math.PI / 2, width: 6, zone: 'R2C1' },
+    { id: 'EAST-TUNNEL', x: 12.6, z: 0, rotation: -Math.PI / 2, width: 6, zone: 'R2C3' },
   ],
   gateLine: null,
   gateLabel: 'RAMP TOP AND TUNNELS',
   corridors: {
     inbound: [
       [-40, 1.6, 0],
-      [-24, 3.4, 0],
-      [-10, 3.0, 0],
-      [0, 2.6, 0],
+      [-24, 3.0, 0],
+      [-10, 2.8, 0],
+      [0, 2.4, 0],
     ],
     egress: [
-      [0, 2.6, 0],
-      [0, 4.2, -14],
-      [0, 7.0, -30],
-      [0, 9.6, -50],
+      [0, 2.4, 0],
+      [0, 3.6, -14],
+      [0, 5.4, -30],
+      [0, 7.4, -50],
     ],
     lateral: [
       [40, 1.6, 0],
-      [24, 3.4, 0.6],
-      [10, 3.0, -0.6],
-      [0, 2.6, 0],
+      [24, 3.0, 0.6],
+      [10, 2.8, -0.6],
+      [0, 2.4, 0],
     ],
     reversal: [
-      [0, 9.6, -48],
-      [0, 7.0, -28],
-      [0, 4.4, -10],
-      [0, 3.0, 10],
+      [0, 7.6, -48],
+      [0, 5.6, -28],
+      [0, 3.6, -10],
+      [0, 2.8, 10],
     ],
     sceneMotion: [
-      [-8, 6.5, 30],
-      [0, 7.0, 0],
-      [8, 9.5, -30],
+      [-8, 6, 30],
+      [0, 6.5, 0],
+      [8, 9, -30],
     ],
   },
-  controlRoom: [46, -30],
+  // People outside the analysed region, drawn muted and not counted
+  ambient: [
+    { x: 0, z: -102, w: 150, d: 70, y: RISE, count: 1600 },
+    { x: 0, z: -38, w: 24, d: 27, count: 480, heading: Math.PI, spread: 1.2 },
+    { x: -17, z: 0, w: 8, d: 15, count: 120, heading: Math.PI / 2, spread: 0.6 },
+    { x: 17, z: 0, w: 8, d: 15, count: 120, heading: -Math.PI / 2, spread: 0.6 },
+    { x: -9.5, z: 30.5, w: 2, d: 8.6, count: 22, heading: 0, spread: 0.3 },
+    { x: 4, z: 44, w: 26, d: 8, y: 6, count: 120 },
+  ],
+  // Where the model's held arrivals wait
+  holding: {
+    'west-tunnel': { x: -82, z: 0, w: 16, d: 16, front: '+x', label: 'WEST TUNNEL ENTRANCE' },
+    'east-tunnel': { x: 82, z: 0, w: 16, d: 16, front: '-x', label: 'EAST TUNNEL ENTRANCE' },
+    'festival-outflow': { x: 0, z: -62, w: 30, d: 10, y: RISE, front: '+z', label: 'LEAVERS HELD ON THE GROUND' },
+  },
+  controlRoom: null,
   incident: {
     date: '24 July 2010',
     time: '≈ 16:40–17:10 CEST',

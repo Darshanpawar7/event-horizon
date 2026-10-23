@@ -9,9 +9,56 @@ import { egressFieldToward } from '../venueModel.js';
 
 const W = 10; // metres from the road toward the stadium wall, per column
 const D = 15; // metres along the wall, per row
-const WALL_X = 15 + 6; // stadium wall centre
-const ASPHALT = '#8E9094';
-const PAVEMENT = '#CFCFCA';
+const WALL = 15; // stadium facade line, the east edge of the forecourt
+
+/** Cubbon Park across the road: a deterministic scatter of large trees, as [x, z, scale]. */
+const PARK_TREES = (() => {
+  const trees = [];
+  let seed = 11;
+  const rand = () => {
+    seed = (seed * 16807) % 2147483647;
+    return seed / 2147483647;
+  };
+  for (let z = -116; z <= 116; z += 9) {
+    for (const x of [-31, -39, -47, -55]) {
+      trees.push([x + (rand() - 0.5) * 4, z + (rand() - 0.5) * 5, 1.2 + rand() * 0.8]);
+    }
+  }
+  return trees;
+})();
+
+function stadium() {
+  const items = [
+    { type: 'box', id: 'facade', x: WALL + 5, z: 0, w: 10, h: 13, d: 156, texture: 'concrete', repeat: [2, 24], color: '#E0D9CB' },
+    { type: 'box', id: 'upper-stand', x: WALL + 16, z: 0, w: 12, h: 21, d: 156, texture: 'concrete', repeat: [2, 24], color: '#CBC3B3' },
+    { type: 'box', id: 'roof', x: WALL + 15, z: 0, w: 26, h: 0.35, d: 158, y: 24.5, rotationZ: -0.12, color: '#F2F2EE', roughness: 0.6 },
+    { type: 'flood', id: 'flood-north', x: 42, z: -78, height: 46, target: [70, 0] },
+    { type: 'flood', id: 'flood-south', x: 42, z: 78, height: 46, target: [70, 0] },
+  ];
+  for (let z = -72; z <= 72; z += 12) {
+    if (Math.abs(Math.abs(z) - 15) < 4) continue; // keep the gate openings clear
+    items.push({ type: 'box', id: `pilaster-${z}`, x: WALL - 0.2, z, w: 0.5, h: 13, d: 1.1, color: '#CFC6B4' });
+  }
+  for (const z of [-60, -30, 0, 30, 60]) {
+    items.push({ type: 'box', id: `roof-mast-${z}`, x: WALL + 4, z, w: 0.6, h: 27, d: 0.6, color: '#9CA3AF', metalness: 0.6 });
+  }
+  return items;
+}
+
+function streetFurniture() {
+  const items = [];
+  for (const z of [-90, -60, -30, 0, 30, 60, 90]) {
+    items.push({ type: 'lamp', id: `lamp-${z}`, x: -4.6, z, height: 9, rotationY: Math.PI });
+  }
+  for (const [z, length] of [
+    [-46, 30],
+    [2, 22],
+    [48, 28],
+  ]) {
+    items.push({ type: 'barrier', id: `kerb-barrier-${z}`, x: -4.7, z, length, rotationY: Math.PI / 2 });
+  }
+  return items;
+}
 
 const venue = {
   id: 'chinnaswamy',
@@ -33,56 +80,58 @@ const venue = {
     R3C2: 'Pavement and barricades · south',
     R3C3: 'Gate 7 forecourt',
   },
-  camera: { position: [-50, 34, 44], target: [4, 2, 0] },
-  ground: { color: PAVEMENT, size: 180 },
+  camera: { position: [-60, 36, 46], target: [6, 0, 0] },
+  lighting: {
+    mode: 'day',
+    sun: [-70, 60, 35],
+    sunColor: '#FFE7C4',
+    sunIntensity: 2.6,
+    hemisphere: { sky: '#C9DDF2', ground: '#8A7A5E', intensity: 0.85 },
+    ambient: 0.2,
+    fog: { color: '#D8DEE6', density: 0.0018 },
+    sky: { turbidity: 8, rayleigh: 1.2, mieCoefficient: 0.005, mieDirectionalG: 0.8 },
+  },
+  ground: { color: '#6E8F57', texture: 'grass', size: 260, repeat: [50, 50] },
+  overlay: { columnMax: 9 },
+  crowd: {
+    // The day after the title: red and gold jerseys, black, white.
+    palette: ['#C8102E', '#B91C1C', '#DA291C', '#7F1D1D', '#111827', '#1F2937', '#C8102E', '#D4A017', '#F3F4F6', '#991B1B', '#E11D48', '#374151'],
+  },
   trees: false,
-  treePositions: [
-    [-36, 0, -40],
-    [-36, 0, -24],
-    [-36, 0, -8],
-    [-36, 0, 8],
-    [-36, 0, 24],
-    [-36, 0, 40],
-    [-44, 0, -32],
-    [-44, 0, -16],
-    [-44, 0, 0],
-    [-44, 0, 16],
-    [-44, 0, 32],
-  ],
   structures: [
-    // Cubbon Road and the park beyond it
-    { type: 'plane', x: -14, z: 0, w: 14, d: 150, color: ASPHALT, y: 0.01 },
-    { type: 'plane', x: -40, z: 0, w: 30, d: 150, color: '#B7C7A6', y: 0.005 },
-    // Pavement barricade line (gaps where the police let people through)
-    ...[-32, -20, -8, 4, 16, 28].map((z) => ({ type: 'box', x: -5.2, z, w: 0.12, h: 1.1, d: 8, color: '#D8D8D8' })),
-    // Stadium stand: outer wall, tier and roof
-    { type: 'box', x: WALL_X, z: 0, w: 12, h: 11, d: 120, color: '#C9C4BA' },
-    { type: 'box', x: WALL_X + 8, z: 0, w: 10, h: 16, d: 120, color: '#B8B2A6' },
-    { type: 'box', x: WALL_X + 6, z: 0, w: 26, h: 0.6, d: 124, color: '#6B7079', y: 16 },
-    // Gate openings: frames with a shutter
-    ...[-15, 15].flatMap((z) => [
-      { type: 'box', x: WALL_X - 6.2, z, w: 0.6, h: 4.2, d: 4.6, color: '#2E3238' },
-      { type: 'box', x: WALL_X - 6.5, z, w: 0.2, h: 3.6, d: 3.4, color: '#FF6600' },
-    ]),
-    // Floodlight pylons
-    ...[-50, 50].map((z) => ({ type: 'box', x: WALL_X + 14, z, w: 1.4, h: 44, d: 1.4, color: '#6B7079' })),
-    ...[-50, 50].map((z) => ({ type: 'box', x: WALL_X + 14, z, w: 6, h: 2.2, d: 6, color: '#F3F4F6', y: 44 })),
+    // Cubbon Road, the pavement and the forecourt in front of the stadium
+    { type: 'road', id: 'cubbon-road', x: -15, z: 0, w: 20, d: 240, crossing: 30 },
+    { type: 'box', id: 'kerb', x: -5.1, z: 0, w: 0.3, h: 0.15, d: 240, color: '#D6D3CC' },
+    { type: 'plane', id: 'pavement', x: 0, z: 0, w: 10, d: 240, y: 0.012, texture: 'plaza', repeat: [3, 72], color: '#D7D1C6' },
+    { type: 'plane', id: 'forecourt', x: 10, z: 0, w: 10, d: 240, y: 0.014, texture: 'concrete', repeat: [3, 60], color: '#CDC5B6' },
+    { type: 'fence', id: 'park-fence', x: -25.8, z: 0, length: 220, height: 1.3, rotationY: Math.PI / 2 },
+    { type: 'forest', id: 'cubbon-park', trees: PARK_TREES },
+    ...stadium(),
+    // Gates 6 and 7: dark openings with numbered boards
+    { type: 'box', id: 'gate-6-opening', x: WALL - 0.08, z: -15, w: 0.3, h: 4.4, d: 5.2, color: '#1A1F26' },
+    { type: 'box', id: 'gate-7-opening', x: WALL - 0.08, z: 15, w: 0.3, h: 4.4, d: 5.2, color: '#1A1F26' },
+    { type: 'sign', id: 'gate-6-sign', text: 'GATE 6', x: WALL - 0.28, z: -15, y: 5.4, w: 3.4, h: 1.0, background: '#14532D', color: '#FFFFFF', rotationY: -Math.PI / 2 },
+    { type: 'sign', id: 'gate-7-sign', text: 'GATE 7', x: WALL - 0.28, z: 15, y: 5.4, w: 3.4, h: 1.0, background: '#14532D', color: '#FFFFFF', rotationY: -Math.PI / 2 },
+    { type: 'sign', id: 'stadium-name', text: 'M. CHINNASWAMY STADIUM', x: WALL - 0.3, z: 0, y: 9.6, w: 22, h: 2.0, background: '#10306E', color: '#FFFFFF', rotationY: -Math.PI / 2 },
+    { type: 'sign', id: 'celebration-n', text: 'VICTORY CELEBRATION · 4 JUNE', x: WALL - 0.3, z: -45, y: 8.2, w: 18, h: 2.2, background: '#C8102E', color: '#F5C518', rotationY: -Math.PI / 2 },
+    { type: 'sign', id: 'celebration-s', text: 'VICTORY CELEBRATION · 4 JUNE', x: WALL - 0.3, z: 45, y: 8.2, w: 18, h: 2.2, background: '#C8102E', color: '#F5C518', rotationY: -Math.PI / 2 },
+    ...streetFurniture(),
+    { type: 'vehicle', id: 'police-north', kind: 'police', x: -21, z: -34, rotationY: 0 },
+    { type: 'vehicle', id: 'police-south', kind: 'police', x: -21, z: 40, rotationY: Math.PI },
+    { type: 'vehicle', id: 'city-bus', kind: 'bus', x: -10, z: 92, rotationY: 0, color: '#2563EB' },
   ],
   labels: [
-    { text: 'CUBBON ROAD', x: -14, z: -56, y: 2.5 },
-    { text: 'CUBBON PARK', x: -40, z: -56, y: 2.5 },
-    { text: 'GATE 6', x: WALL_X - 7, z: -15, y: 6 },
-    { text: 'GATE 7', x: WALL_X - 7, z: 15, y: 6 },
-    { text: 'STADIUM STAND', x: WALL_X + 6, z: 0, y: 19 },
-    { text: 'FROM MG ROAD →', x: -14, z: 60, y: 2.5 },
+    { text: 'CUBBON ROAD', x: -15, z: -60, y: 2.5 },
+    { text: 'CUBBON PARK', x: -42, z: -50, y: 9 },
+    { text: 'TOWARD MG ROAD', x: -15, z: 70, y: 2.5 },
   ],
   cameras: [
-    { id: 'camera-1', label: 'CAM 01', x: 6, z: -36, rotation: Math.PI, covers: ['R1C2', 'R1C3', 'R2C3'] },
-    { id: 'camera-2', label: 'CAM 02', x: 6, z: 36, rotation: 0, covers: ['R3C2', 'R3C3', 'R2C3'] },
+    { id: 'camera-1', label: 'CAM 01', x: 4.5, z: -40, rotation: 0, covers: ['R1C2', 'R1C3', 'R2C3'] },
+    { id: 'camera-2', label: 'CAM 02', x: 4.5, z: 40, rotation: Math.PI, covers: ['R3C2', 'R3C3', 'R2C3'] },
   ],
   gates: [
-    { id: 'GATE-06', x: WALL_X - 7.5, z: -15, rotation: -Math.PI / 2, width: 3, zone: 'R1C3' },
-    { id: 'GATE-07', x: WALL_X - 7.5, z: 15, rotation: -Math.PI / 2, width: 3, zone: 'R3C3' },
+    { id: 'GATE-06', x: WALL - 1.4, z: -15, rotation: Math.PI / 2, width: 3.4, zone: 'R1C3' },
+    { id: 'GATE-07', x: WALL - 1.4, z: 15, rotation: Math.PI / 2, width: 3.4, zone: 'R3C3' },
   ],
   gateLine: null,
   gateLabel: 'STADIUM GATES',
@@ -117,7 +166,18 @@ const venue = {
       [-20, 6.5, 40],
     ],
   },
-  controlRoom: [WALL_X + 6, -70],
+  // People outside the analysed region, drawn muted and not counted
+  ambient: [
+    { x: -5, z: -48, w: 40, d: 46, count: 1100, heading: Math.PI / 2, spread: 1.8 },
+    { x: -5, z: 48, w: 40, d: 46, count: 1100, heading: Math.PI / 2, spread: 1.8 },
+    { x: -31, z: 0, w: 9, d: 120, count: 300, heading: Math.PI / 2, spread: 1.2 },
+  ],
+  // Where the model's held arrivals wait
+  holding: {
+    'from-mg-road': { x: -12, z: 96, w: 26, d: 22, front: '-z', label: 'MG ROAD JUNCTION' },
+    'from-cubbon-north': { x: -12, z: -96, w: 26, d: 22, front: '+z', label: 'CUBBON ROAD (NORTH)' },
+  },
+  controlRoom: null,
   incident: {
     date: '4 June 2025',
     time: '≈ 15:30 onward IST',
