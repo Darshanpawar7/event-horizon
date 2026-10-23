@@ -7,9 +7,11 @@
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
+    "demo": "vite build && vite preview --host 127.0.0.1 --open",
     "check:venues": "node scripts/venue_check.mjs 2",
     "verify:console": "node scripts/verify_console.cjs http://127.0.0.1:4173 ./verify-shots chrome",
-    "review:scenes": "node scripts/review_scenes.cjs http://127.0.0.1:4173 ./review-shots"
+    "review:scenes": "node scripts/review_scenes.cjs http://127.0.0.1:4173 ./review-shots",
+    "perf:scenes": "node scripts/perf_scenes.cjs http://127.0.0.1:4173"
   },
   "dependencies": {
     "@react-three/drei": "~10.7.7",
