@@ -211,6 +211,29 @@ export function surfaceHeight(venue, x, z, zoneId = null) {
   return height;
 }
 
+/**
+ * The single floor height of a zone when nothing in it slopes or climbs, else
+ * null. Sampled on a 7×7 grid over the cell, so a stair flight or a ramp
+ * anywhere in it makes the zone uneven. Lets the crowd skip a per-person
+ * height lookup on flat ground, which is most of every venue.
+ * @param {object} venue
+ * @param {{id:string,x:number,z:number,width:number,depth:number}} zone
+ * @returns {number|null}
+ */
+export function flatZoneHeight(venue, zone) {
+  let first = null;
+  for (let i = 0; i < 7; i += 1) {
+    for (let j = 0; j < 7; j += 1) {
+      const x = zone.x + (i / 6 - 0.5) * zone.width;
+      const z = zone.z + (j / 6 - 0.5) * zone.depth;
+      const height = surfaceHeight(venue, x, z, zone.id);
+      if (first === null) first = height;
+      else if (Math.abs(height - first) > 1e-6) return null;
+    }
+  }
+  return first;
+}
+
 const layouts = new Map();
 
 /**

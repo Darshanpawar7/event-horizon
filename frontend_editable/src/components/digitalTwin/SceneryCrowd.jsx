@@ -1,10 +1,11 @@
-import { useMemo, useRef, useLayoutEffect } from 'react';
+import { useEffect, useMemo, useRef, useLayoutEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { useVenueStore } from '../../store/useVenueStore';
 import { useForecast, useVenue } from '../../store/derived';
 import { surfaceHeight } from '../../data/venueModel';
+import { figureGeometry, figureMaterial, disposeFigureGeometry, writeFigure } from '../../lib/figures';
 import { NEO, MONO } from '../../theme';
 
 const GROUND_Y = -0.6;
@@ -21,9 +22,6 @@ const MUTED = new THREE.Color('#6B7280');
 const DEFAULT_PALETTE = ['#1F2937', '#374151', '#4B5563', '#6B7280', '#9CA3AF', '#7F1D1D', '#1E3A8A', '#065F46', '#92400E'];
 const SKIN = ['#8D5524', '#C68642', '#E0AC69', '#F1C27D', '#5C3A21', '#A1665E'];
 
-const dummy = new THREE.Object3D();
-const tint = new THREE.Color();
-
 /**
  * People outside the analysed region: the crowd on the next platform, the
  * street beyond the camera's view, the festival ground. Also the people the
@@ -33,89 +31,68 @@ const tint = new THREE.Color();
  * None of these are counted by the console, and they are drawn in muted
  * colours so they cannot be mistaken for the analysed crowd. Held figures
  * appear and disappear with the model's per-source queue.
+ *
+ * They stand still, so every figure is placed once per venue: one instanced
+ * mesh for the ambient crowd and one per holding area, whose draw count
+ * follows the held number. Nothing is rewritten or uploaded per frame.
  */
 export default function SceneryCrowd() {
   const venue = useVenue();
   const forecast = useForecast();
   const visible = useVenueStore((state) => state.overlays.trajectories);
-  const legsRef = useRef(null);
-  const bodyRef = useRef(null);
-  const headRef = useRef(null);
 
   const layout = useMemo(() => buildLayout(venue), [venue]);
   const held = forecast.held || {};
+  const heldRef = useRef(held);
+  heldRef.current = held;
 
+  const material = useMemo(() => figureMaterial(), []);
+  useEffect(() => () => material.dispose(), [material]);
+  const geometries = useMemo(() => layout.groups.map((group) => groupGeometry(group.figures)), [layout]);
+  useEffect(() => () => geometries.forEach(disposeFigureGeometry), [geometries]);
+
+  const meshes = useRef([]);
+  const setters = useMemo(
+    () =>
+      layout.groups.map((_, index) => (mesh) => {
+        meshes.current[index] = mesh;
+      }),
+    [layout],
+  );
+
+  // Place every figure once; only the held groups' draw counts change later.
   useLayoutEffect(() => {
-    for (const ref of [legsRef, bodyRef, headRef]) {
-      if (!ref.current) continue;
-      ref.current.frustumCulled = false;
-      ref.current.count = 0;
-    }
-  }, [layout]);
-
-  useFrame(({ clock }) => {
-    const legs = legsRef.current;
-    const body = bodyRef.current;
-    const head = headRef.current;
-    if (!legs || !body || !head || !visible) return;
-    const time = clock.getElapsedTime();
-    let cursor = 0;
-
-    const draw = (figure) => {
-      const sway = Math.sin(time * 1.3 + figure.phase) * 0.03;
-      const base = GROUND_Y + figure.y;
-      dummy.rotation.set(0, figure.heading, 0);
-      dummy.scale.set(1, figure.build, 1);
-
-      dummy.position.set(figure.x, base + 0.42 * figure.build, figure.z);
-      dummy.updateMatrix();
-      legs.setMatrixAt(cursor, dummy.matrix);
-      legs.setColorAt(cursor, figure.trouser);
-
-      dummy.rotation.set(sway, figure.heading, 0);
-      dummy.position.set(figure.x, base + 1.12 * figure.build, figure.z);
-      dummy.updateMatrix();
-      body.setMatrixAt(cursor, dummy.matrix);
-      body.setColorAt(cursor, figure.cloth);
-
-      dummy.rotation.set(0, figure.heading, 0);
-      dummy.scale.set(figure.build, figure.build, figure.build);
-      dummy.position.set(figure.x, base + 1.63 * figure.build, figure.z);
-      dummy.updateMatrix();
-      head.setMatrixAt(cursor, dummy.matrix);
-      head.setColorAt(cursor, figure.skin);
-      cursor += 1;
-    };
-
-    for (const figure of layout.ambient) draw(figure);
-    for (const group of layout.held) {
-      const active = Math.min(group.figures.length, held[group.source] || 0);
-      for (let i = 0; i < active; i += 1) draw(group.figures[i]);
-    }
-
-    for (const mesh of [legs, body, head]) {
-      mesh.count = cursor;
+    layout.groups.forEach((group, index) => {
+      const mesh = meshes.current[index];
+      if (!mesh) return;
+      const array = mesh.instanceMatrix.array;
+      group.figures.forEach((figure, i) => {
+        writeFigure(array, i * 16, figure.x, GROUND_Y + figure.y, figure.z, Math.cos(figure.heading), Math.sin(figure.heading), 0, 1, figure.build);
+      });
       mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    }
+      mesh.boundingSphere = group.sphere;
+      mesh.count = group.source ? 0 : group.figures.length;
+    });
+  }, [layout, geometries]);
+
+  useFrame(() => {
+    layout.groups.forEach((group, index) => {
+      const mesh = meshes.current[index];
+      if (!mesh || !group.source) return;
+      mesh.count = Math.min(group.figures.length, Math.round(heldRef.current[group.source] || 0));
+    });
   });
 
-  if (!visible) return null;
-
   return (
-    <group>
-      <instancedMesh ref={legsRef} args={[undefined, undefined, Math.max(1, layout.total)]}>
-        <boxGeometry args={[0.3, 0.84, 0.22]} />
-        <meshStandardMaterial roughness={0.95} />
-      </instancedMesh>
-      <instancedMesh ref={bodyRef} args={[undefined, undefined, Math.max(1, layout.total)]} castShadow>
-        <capsuleGeometry args={[0.2, 0.46, 4, 8]} />
-        <meshStandardMaterial roughness={0.9} />
-      </instancedMesh>
-      <instancedMesh ref={headRef} args={[undefined, undefined, Math.max(1, layout.total)]}>
-        <sphereGeometry args={[0.13, 8, 8]} />
-        <meshStandardMaterial roughness={0.8} />
-      </instancedMesh>
+    <group visible={visible}>
+      {layout.groups.map((group, index) => (
+        <instancedMesh
+          key={`${venue.id}-${index}`}
+          ref={setters[index]}
+          args={[geometries[index], material, Math.max(1, group.figures.length)]}
+          dispose={null}
+        />
+      ))}
 
       {/* A fixed pool of labels, reused by whichever venue is active, so no
           HTML overlay is created or destroyed when the venue changes. */}
@@ -124,8 +101,8 @@ export default function SceneryCrowd() {
         const count = group ? held[group.source] || 0 : 0;
         return (
           <Html key={slot} position={group ? group.labelAt : [0, -50, 0]} center pointerEvents="none" zIndexRange={[9, 0]}>
-            <div style={{ ...heldLabelStyle, display: count >= 1 ? 'block' : 'none' }}>
-              HELD OUTSIDE THE VIEW · {count.toLocaleString()} · {group?.label}
+            <div style={{ ...heldLabelStyle, display: visible && count >= 1 ? 'block' : 'none' }}>
+              HELD OUTSIDE THE VIEW · {Math.round(count).toLocaleString()} · {group?.label}
               <span style={{ color: '#F59E0B' }}> SIMULATED</span>
             </div>
           </Html>
@@ -133,6 +110,33 @@ export default function SceneryCrowd() {
       })}
     </group>
   );
+}
+
+/** The figure geometry for one group, carrying its muted colours. */
+function groupGeometry(figures) {
+  const size = Math.max(1, figures.length);
+  const trousers = new Float32Array(size * 3);
+  const clothes = new Float32Array(size * 3);
+  const skin = new Float32Array(size * 3);
+  figures.forEach((figure, i) => {
+    figure.trouser.toArray(trousers, i * 3);
+    figure.cloth.toArray(clothes, i * 3);
+    figure.skin.toArray(skin, i * 3);
+  });
+  return figureGeometry(trousers, clothes, skin);
+}
+
+/** A sphere around a group's figures, so three can skip it when out of view. */
+function boundingSphere(figures) {
+  if (figures.length === 0) return new THREE.Sphere(new THREE.Vector3(0, -50, 0), 1);
+  const box = new THREE.Box3();
+  for (const figure of figures) {
+    box.expandByPoint(new THREE.Vector3(figure.x, GROUND_Y + figure.y, figure.z));
+    box.expandByPoint(new THREE.Vector3(figure.x, GROUND_Y + figure.y + 2, figure.z));
+  }
+  const sphere = box.getBoundingSphere(new THREE.Sphere());
+  sphere.radius += 1;
+  return sphere;
 }
 
 /** Deterministic positions and colours for every scenery figure of a venue. */
@@ -191,12 +195,13 @@ function buildLayout(venue) {
       source,
       label: rect.label || source,
       figures,
+      sphere: boundingSphere(figures),
       labelAt: [rect.x, GROUND_Y + (rect.y ?? 0) + 4, rect.z],
     };
   });
 
-  const total = ambient.length + held.reduce((sum, group) => sum + group.figures.length, 0);
-  return { ambient, held, total };
+  const groups = [{ source: null, figures: ambient, sphere: boundingSphere(ambient) }, ...held];
+  return { groups, held };
 }
 
 function hash(text) {
