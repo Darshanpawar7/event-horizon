@@ -399,6 +399,8 @@ asking; a request mentioning compression may be about deployment, not the repo.
 | Scene review on the GPU: every venue at medium, New Delhi and Chinnaswamy at high | No page errors; every image checked |
 | `verify_console.cjs` | Every venue shows its banner, timeline panel, brief, warning and branch comparison; the walkthrough clicks through; no page errors; only React Three Fiber's known `THREE.Clock` warning |
 | Python suites | 47 of 48 pass with the global 3.12 site-packages on `PYTHONPATH`; the 48th (offline training) cannot load scikit-learn's DLL, which Windows Application Control now blocks. No Python changed |
+| Dev server, the way the user runs it (vsync on, GPU, two venue switches) | Previous commit `754c59d` on :3001: 12 fps. This work on :3000: 58 fps, AUTO chose MED. Both log the same 14 development-only React warnings ("Attempted to synchronously unmount a root"), one per drei `Html` overlay under StrictMode; the production build logs none |
+| Each code commit built on its own | `dc850bf`, `157af3c`, `f12c977`, `b159f04` all build in a clean worktree |
 
 ### Open items
 
@@ -408,3 +410,12 @@ asking; a request mentioning compression may be about deployment, not the repo.
 - scikit-learn's DLL is now blocked by Application Control (it loaded this morning).
 - High tier runs 20–26 fps on the Iris Xe; a cheaper ambient occlusion would help medium.
 - The first visit to a venue compiles its shaders; `renderer.compileAsync` could hide it.
+- Development-only React warnings from drei `Html` under StrictMode (14 on load); they
+  predate this work and do not appear in the production build.
+
+### Commits
+
+`dc850bf` crowd as one mesh per zone · `157af3c` static merge and the light budget ·
+`f12c977` render tiers and AUTO · `b159f04` free camera and controls · `f74ae2c` GPU
+frame-rate check and `npm run demo` · `44fbf15` READMEs · `d43548f` session log and
+playbook; pushed to `origin/main` as `754c59d..d43548f`, plus this note.

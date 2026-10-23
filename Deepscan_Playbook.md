@@ -356,6 +356,9 @@ recognises the id in `backendScenarioKey`.
   contact darkening on structures) could bring a richer look to medium.
 - The first visit to each venue compiles its shader variants (one frame of about 250 ms
   on the first switch here); `renderer.compileAsync` could hide it.
+- The dev server logs 14 React warnings on load ("Attempted to synchronously unmount a
+  root"): one per drei `Html` overlay, from StrictMode's double effects. Pre-existing and
+  development-only; replacing the overlays with one projected HTML layer would end them.
 - Phone-width review of the console; the twin overlays are dense below ~1080 px.
 - A trained model or real analytics adapter behind the API remains the real roadmap.
 - The deck photos in `docs/deck/photos/` have no deck yet.
