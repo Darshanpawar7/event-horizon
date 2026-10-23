@@ -35,10 +35,12 @@ model's simplifications. Keep it that way.
 | `frontend_editable/src/lib/crowdModel.js` | The cell-transmission crowd-flow model |
 | `frontend_editable/src/store/useVenueStore.js` | zustand store: mode, venue, scenario, playback, polling, pure `compute*` derivations |
 | `frontend_editable/src/store/derived.js` | Memoised hooks over the derivations (never pass object-building selectors to zustand) |
-| `frontend_editable/src/components/digitalTwin/` | The 3D scene, all venue-driven: `Structures` (primitive library), `ZoneTile` (heat overlay + column), `CrowdParticles` (analysed crowd), `SceneryCrowd` (muted ambient and held crowds), `IncidentBeacon`, `IncidentHud`, `SceneEffects` (sky, sun or moon, fog), `PostFX` (AO, bloom, ACES, SMAA), `TextSprite`, `CameraRig` |
+| `frontend_editable/src/components/digitalTwin/` | The 3D scene, all venue-driven: `Structures` (primitive library), `ZoneTile` (heat overlay + column), `CrowdParticles` (analysed crowd), `SceneryCrowd` (muted ambient and held crowds), `IncidentBeacon`, `IncidentHud`, `SceneEffects` (sky, sun or moon, fog, shadow refresh), `PostFX` (AO, bloom, ACES, SMAA by tier), `StaticMerge` (static meshes into a few draw calls), `QualityGovernor` (AUTO tiers), `TextSprite`, `CameraRig` (flights), `CameraInput` (keys, double-click) |
+| `frontend_editable/src/lib/figures.js` | The merged crowd figure (legs, body, head with a `part` attribute), its Lambert material with per-instance colours, the direct matrix writer, contact shadows |
+| `frontend_editable/src/data/cameraViews.js` | Overview, plan (straight down) and incident-zone views shared by the CAMERA buttons and the 1 2 3 keys |
 | `frontend_editable/src/lib/textures.js` | Procedural canvas textures: asphalt, concrete, paving, sand, grass, gravel, ballast, signs, lit facades |
 | `frontend_editable/src/components/dashboard/` | Console panels |
-| `frontend_editable/scripts/` | `venue_check.mjs` (tuning numbers, Node only), `verify_console.cjs` (headless walkthrough, errors and labels), `review_scenes.cjs` (screenshots of every venue at T0: wide, focus, acted-on) |
+| `frontend_editable/scripts/` | `venue_check.mjs` (tuning numbers, Node only), `verify_console.cjs` (headless walkthrough, errors and labels), `review_scenes.cjs` (screenshots of every venue at T0: wide, focus, acted-on), `perf_scenes.cjs` (frame rate, draw calls and stalls per venue on the real GPU) |
 | `docs/screenshots/*.png` | README images; `docs/deck/photos/*.jpg` deck photos with `credits.json` |
 
 ## 3. This machine
@@ -51,6 +53,14 @@ model's simplifications. Keep it that way.
 - Google Chrome and Edge are installed; Playwright's own Chromium builds are also present
   under `%LOCALAPPDATA%\ms-playwright`. `playwright-core` + `channel: 'chrome'` with
   SwiftShader renders the WebGL twin headless in about 5 s.
+- GPU: Intel Iris Xe (integrated) on an i5-1240P, 16 GB RAM, 1920×1080 at 125 % scaling
+  (device pixel ratio 1.25), 60 Hz. Headless Chrome uses this GPU with
+  `--use-angle=d3d11 --ignore-gpu-blocklist` (renderer string "ANGLE (Intel, Intel(R) Iris(R)
+  Xe Graphics … Direct3D11)"); add `--disable-gpu-vsync --disable-frame-rate-limit` to see
+  headroom above 60. This is the machine the user presents from, so measure here.
+- The console the user opens is often the dev server on :3000 (React development build,
+  StrictMode double effects). `npm run demo` (build + preview on :4173, same `/api` proxy)
+  is the smooth way to present.
 - Working tree is CRLF (`core.autocrlf=true`, LF in the index). Write files with CRLF or
   let git normalise; never produce mixed endings inside one file.
 - The repo lives under `Downloads`; `.venv` and `node_modules` are gitignored.
@@ -98,9 +108,54 @@ colour, `hemisphere`, `ambient`, `fog`, `sky`, `background`, `exposure`) and mod
 by evidence state (fog thickens when visibility is lost, light cools when tracking is
 gone). Day venues get drei `Sky`, night venues `Stars`. `PostFX` (lazy chunk `postfx`)
 adds N8AO, Bloom, ACES ToneMapping, Vignette and SMAA; the composer switches the
-renderer's own tone mapping off, which is why ACES is an explicit pass. `quality: 'low'`
-(twin controls or `?quality=low`) skips PostFX entirely. Lamps, canopy lights, floods and
-watchtowers only create real lights at night; keep a venue under about 12 point lights.
+renderer's own tone mapping off, which is why ACES is an explicit pass and the canvas is
+created `flat`. Lamps, canopy lights, floods and watchtowers create real lights only at
+night, and only `LIGHT_BUDGET` (5) of them: floods first, then those nearest
+`venue.lightFocus` (default the origin); the rest glow and bloom but light nothing.
+
+### Performance and render tiers
+`quality` is what the operator chose ('auto' by default, or 'high', 'medium', 'low' from
+the twin controls or `?quality=`); `renderTier` is what is drawn. Tiers:
+
+| Tier | Effects | Canvas pixel ratio | Day shadows redrawn |
+| --- | --- | --- | --- |
+| high | N8AO, Bloom, ACES, Vignette, SMAA | device ratio (up to 2) | every frame |
+| medium | Bloom, ACES, Vignette, SMAA | min(device, 1) | 12 a second |
+| low | ACES, Vignette | 0.75 × min(device, 1) | 5 a second |
+
+`QualityGovernor` (AUTO) starts at medium, measures 1.5 s windows after a 2 s settle, steps
+down under 40 fps and up after three windows over 56. It tries high at most once, in the
+first 45 s, never on integrated or software GPUs (renderer-name test), and a tier it had to
+leave within 10 s of climbing to it becomes the session ceiling. On this machine it settles
+on medium at about 90 to 100 fps (vsync off) in every venue; high draws 20 to 26.
+
+What made that possible, measured with `npm run perf:scenes` (before: 14 to 25 fps at
+the old high default, main thread 100 % busy, up to 1,060 draw calls a frame):
+- `CrowdParticles`: one instanced mesh per zone of the merged figure (`lib/figures.js`),
+  one matrix per person written straight into the buffer (no `Object3D`, no colour string
+  parsing per frame), only the used range uploaded (`addUpdateRange`), colours as static
+  per-instance attributes, a fixed bounding sphere per zone so off-screen zones are culled,
+  flat zones skip the per-person `surfaceHeight`. Contact shadows share the matrices.
+- `SceneryCrowd`: placed once per venue; held groups only change their draw count.
+- `StaticMerge` around the static venue (ground, walkways, `Structures`, trees): meshes
+  sharing material, geometry layout, shadow flags and render order merge into one; New
+  Delhi's 1,540 sleepers became one mesh. Skipped: `userData.dynamic`/`noMerge` (or under
+  such a group), hidden, instanced, shader and transparent materials. The static block is
+  memoised (`StaticVenue`) so the 5 Hz playback ticks re-render only the nine zone tiles.
+- Night venues: no sun shadow (`castShadow={!night}`), five real lights.
+- The composer stays mounted on every tier and the canvas is `flat`, so neither a tier
+  change nor the lazy PostFX chunk arriving recompiles materials.
+
+### Camera controls
+OrbitControls are map-style (`screenSpacePanning={false}`, `zoomToCursor`, min 3 m, max
+320 m). `CameraRig` flies to the venue camera, FOCUS close-ups (`venue.views` or a generic
+one) and `cameraRequest`s (CAMERA buttons, double-click); the newest wins, any controls
+`start` event (drag, wheel, movement key) cancels a flight, and a flight lands after 3.5 s
+at most. ORBIT sets `autoRotate` between flights. `CameraInput` handles W A S D / arrows
+(ground-relative, speed scales with distance, Shift ×2.5), Q E (turn), + − (zoom), 1 2 3
+(overview, incident, plan), O (orbit), ignores keys typed into fields, and turns a
+double-click into a flight to the point under the pointer (merged meshes and the ground
+are tagged `userData.pickable`).
 
 ### Terrain, scenery and labels
 `venue.floor` ({low, high, rise, xMin, xMax}) slopes the floor along z; `stairs` marked
@@ -134,7 +189,14 @@ recognises the id in `backendScenarioKey`.
 | No history rewrite | Destructive; the user did not ask; the pack is only 7.7 MB |
 | Explicit `core` chunk list instead of a catch-all vendor chunk | Rollup hoists modules shared with a manual chunk into that chunk; a catch-all would drag lazy-only libraries into the eager download |
 | `three` and `charts` lazy via `React.lazy`, not just manual chunks | Lazy boundaries keep them off the critical path; naming them keeps hashes stable |
-| No `dpr` cap on the twin's canvas | A 1.5 cap was tried and removed: the user prefers full render quality on high-DPI screens over GPU savings |
+| Full device pixel ratio on the high tier; lower ratios only on medium and low | The user prefers full render quality on high-DPI screens (an earlier 1.5 cap was removed); on an integrated GPU AUTO settles on medium, where resolution is the cheapest thing to give up |
+| AUTO quality by default, starting at medium | The user's laptop lagged at the old high default (14 to 25 fps); medium holds 90+ there and looks nearly the same |
+| High tried by AUTO at most once, early, never on integrated GPUs | Each failed trial is seconds of stutter; a demo in progress must never hit one |
+| No ambient occlusion below high, contact shadows instead | N8AO even at `quality="performance"` halved medium's frame rate; a soft disc under each figure grounds the crowd at almost no cost |
+| Lambert material for figures | People are matte; the specular term cost per light per pixel with nothing to show for it |
+| Five real lights at night | Every lit pixel pays for every light; New Delhi had twelve. Floods first, then the fixtures nearest the incident |
+| Merge static meshes at runtime instead of rewriting primitives as instanced | One generic component covers every current and future venue; primitives stay readable JSX |
+| `npm run demo` for presenting | The production build is markedly smoother than the dev server the user had been opening |
 | JSON-only gzip in the API | Gzipping Range video responses breaks seeking and saves nothing |
 | Precompression plugin written in-repo with `node:zlib` | No new dependency; servers that cannot serve `.br`/`.gz` ignore them |
 | Did not emit `observation.forecast` from the API (README roadmap item) | No tracker runs in the API; a demo forecast would be labelled BACKEND EVIDENCE and violate the provenance discipline |
@@ -209,6 +271,29 @@ recognises the id in `backendScenarioKey`.
   FOCUS showed markers the landed view hides. `review_scenes.cjs` waits 14 s after
   FOCUS; judge close-ups only from shots taken after the flight lands.
 - **Installing `@react-three/postprocessing` failed with ERESOLVE** until fiber was ≥ 9.7.
+- **Mounting or unmounting the effect composer recompiles every material** (it switches
+  the renderer's tone mapping). An AUTO step to a tier without the composer froze the view
+  for seconds. Keep it mounted on every tier and create the canvas `flat`.
+- **three r184 declares `vColor` as a vec4.** A custom `color_vertex` that assigned a vec3
+  failed to compile and the crowd vanished (the page still ran). Keep three's chunk and
+  override `vColor.rgb` after it.
+- **Disposing a geometry frees the GPU buffers of every attribute on it**, even ones another
+  geometry shares. Give each disposable geometry its own copy (the figure shape is a few KB).
+- **`instanceMatrix.needsUpdate` uploads the whole buffer** unless update ranges are set;
+  with 7,200-instance buffers that was most of the main thread in Itaewon and Chinnaswamy.
+- **Each separate mesh is a draw call and a matrix upload per pass.** Rails, barriers, steps
+  and dashes built from hundreds of meshes are fine inside `StaticMerge`; anything that
+  moves inside it must carry `userData.dynamic` (the flag cloth does).
+- **Laptop GPU frame rates drift ±30 % between runs** as clocks change. Compare variants by
+  alternating them back to back, never one run each; an apparent 40 % regression from the
+  contact shadows was noise.
+- **A Playwright `textContent()` on a missing element waits 30 s.** Pass a short `timeout`.
+- **`.venv` can lose its system site-packages.** On 2026-10-23 it was recreated at 16:34
+  with a plain `python -m venv .venv`, so `pyvenv.cfg` said
+  `include-system-site-packages = false` and NumPy / scikit-learn vanished from it. Check
+  that line first when those imports fail; `PYTHONPATH` set to the global 3.12
+  `Lib\site-packages` works for one run without touching the environment. scikit-learn's
+  `_openmp_helpers` DLL can also be blocked by Application Control.
 - **`sed` one-liners that insert multi-line strings mangle files.** Use the Edit tool or a
   Python script with explicit `\n`.
 - **The `data/` gitignore rule** is unanchored and only `frontend_editable/src/data/` is
@@ -226,7 +311,9 @@ recognises the id in `backendScenarioKey`.
    it drives the installed Chrome); zero page errors; look at the screenshots.
 6. After any scene or venue change, `npm run review:scenes` (about a minute per venue at
    high quality) and look at every image: is the incident visible, is anything hiding it,
-   are labels readable?
+   are labels readable? Then `npm run perf:scenes`: AUTO should hold well over 60 fps on
+   this machine with no frame over 50 ms; compare against a back-to-back run of the
+   previous build if a number moves.
 7. Append to `session_log.md`; update this file.
 
 ### Adding a venue
@@ -239,7 +326,9 @@ recognises the id in `backendScenarioKey`.
 5. Register in `index.js`; run `npm run check:venues 2 --verbose` and tune until the
    reconstruction reaches its documented band around T0 and the branch improves it.
 6. Give it `lighting`, `ground`, a crowd `palette`, `ambient` and `holding` rectangles and
-   `views` for its crush zones; keep night venues under about 12 lights. Set
+   `views` for its crush zones; only five fixtures become real lights at night (set
+   `lightFocus` if the incident is far from the origin). Mark animated structures
+   `userData.dynamic` so `StaticMerge` leaves them alone. Set
    `overlay.beaconHeight` or `gateLabelAt` if the beam or the exits label stands in front
    of the crowd from the venue camera.
 7. Add the venue's title to `VENUES` in `scripts/verify_console.cjs` and
@@ -263,7 +352,10 @@ recognises the id in `backendScenarioKey`.
 
 ## 9. Open items for later sessions
 
-- Commit the visual upgrade (second half of 2026-10-22) when the user asks.
+- High tier runs 20 to 26 fps on the Iris Xe; N8AO is the cost. A cheaper AO (or baked
+  contact darkening on structures) could bring a richer look to medium.
+- The first visit to each venue compiles its shader variants (one frame of about 250 ms
+  on the first switch here); `renderer.compileAsync` could hide it.
 - Phone-width review of the console; the twin overlays are dense below ~1080 px.
 - A trained model or real analytics adapter behind the API remains the real roadmap.
 - The deck photos in `docs/deck/photos/` have no deck yet.

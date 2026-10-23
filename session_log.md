@@ -304,3 +304,107 @@ asking; a request mentioning compression may be about deployment, not the repo.
   alley gradient at Itaewon are drawn from descriptions, and the caveats say so.
 - Software rendering in the headless review runs at a few frames a second; a real GPU is
   needed to judge smoothness. Weaker machines can use RENDER QUALITY: LOW.
+
+---
+
+## 2026-10-23 — Commit and push, a smooth twin, a camera that goes anywhere
+
+### Requests
+
+1. "Can you run it again? Also please commit and push to origin."
+2. "The simulation now looks good but it's getting stuck/lagging a lot and its point of
+   reference is fixed at one place. Please make it smooth and easily movable, so we can
+   easily demonstrate."
+
+### State found
+
+- The API (:8000) and the dev server (:3000) were already running again, started at 16:34
+  outside this session; they were left as they were.
+- 37 uncommitted paths: the whole visual upgrade of 2026-10-22.
+- `.venv` had been recreated at 16:34 (`pyvenv.cfg` now says
+  `include-system-site-packages = false`, command `python -m venv .venv`), so NumPy and
+  scikit-learn from the global 3.12 are no longer visible inside it.
+
+### What was done
+
+#### Commit and push
+- Eight commits `c5122f3..754c59d` pushed to `origin/main`: held arrivals (model); post-
+  processing, lighting, textures and structures; human figures and scenery crowds; heat
+  overlay, beacon and focus close-ups; the six venues; the scene review script; READMEs;
+  session log and playbook. Each feature commit was built on its own in a temporary worktree
+  (node_modules linked by a junction, unlinked before the worktree was removed).
+  `package.json` was staged from an index blob without the `review:scenes` line so that line
+  lands with its script. No co-author lines.
+
+#### Measured before changing anything
+- Headless Chrome on this machine's Intel Iris Xe (ANGLE Direct3D 11, vsync off, device
+  pixel ratio 1.25): 14–25 fps at the old default (high), 21–60 with effects off. The main
+  thread was 100 % busy: up to 1,061 draw calls a frame (New Delhi's 1,540 rail sleepers
+  were separate meshes), full 7,200-instance buffer uploads every frame, and per figure per
+  frame three Euler-to-matrix builds and three colour strings parsed.
+
+#### Smoothness (details in the playbook, "Performance and render tiers")
+- `lib/figures.js` + `CrowdParticles.jsx`: one merged figure per person, one instanced mesh
+  per zone, matrices written straight into the buffer, only the used range uploaded, colours
+  as static per-instance attributes, per-zone culling spheres, flat zones skip the height
+  lookup, Lambert shading, soft contact shadows that share the figures' matrices.
+- `SceneryCrowd.jsx`: placed once per venue; held groups change only their draw count.
+- `StaticMerge.jsx` around a memoised static venue: about 1,060 → 130 draw calls at New Delhi;
+  the five-a-second playback ticks re-render only the zone tiles.
+- Night venues: five real lights (`LIGHT_BUDGET`, floods first) and no moon shadow.
+- Render tiers high / medium / low and `QualityGovernor` (AUTO, the new default, starting at
+  medium; high tried at most once, never on integrated GPUs). Ambient occlusion only on high
+  (even N8AO "performance" halved medium). Day shadows redrawn every frame, 12 or 5 a second.
+- The composer stays mounted on every tier and the canvas is `flat`: an early build froze
+  for seconds when AUTO dropped to low, because unmounting the composer recompiled every
+  material.
+- High keeps the device's full pixel ratio (the user's earlier preference); only medium and
+  low lower it.
+
+#### A camera that goes anywhere
+- Map-style orbit controls (pan along the ground, zoom toward the pointer, min 3 m).
+- `CameraInput.jsx`: W A S D / arrows, Q E, + −, Shift; 1 overview, 2 incident, 3 plan view,
+  O orbit; double-click flies to the point under the pointer; keys typed into fields ignored.
+- `CameraRig.jsx`: flights for venue, FOCUS and requests; any drag, wheel or movement key
+  cancels a flight; flights land within 3.5 s.
+- CAMERA buttons (OVERVIEW, INCIDENT, TOP, ORBIT) and RENDER QUALITY (AUTO, HIGH, MED, LOW,
+  with the tier AUTO chose) in the twin controls; a two-line navigation hint on the twin.
+
+#### Bugs found on the way
+- three r184's `vColor` is a vec4; the first figure shader assigned a vec3 and failed to
+  compile, so the crowd vanished in that build (caught by the probe's console capture).
+- Sharing attribute buffers between disposable geometries would free buffers still in use;
+  each mesh now owns a copy of the few-KB figure shape.
+- A Playwright `textContent()` on a missing element waited 30 s per venue; probes pass a
+  short timeout.
+
+#### Tools and docs
+- `npm run demo` (build, then preview on :4173 with the same `/api` proxy, opening the
+  browser) and `npm run perf:scenes` (`scripts/perf_scenes.cjs`, the GPU frame-rate check).
+- README: quality tiers, "Moving around", measured frame rates, the corrected note that
+  `vite preview` does proxy `/api`; frontend README: tiers, what keeps it smooth, camera,
+  layout; playbook: this machine's GPU, performance and camera sections, decisions, traps,
+  checklists, open items.
+
+### Verification
+
+| Check | Result |
+| --- | --- |
+| `npm run build` | Passes; entry imports only `core` |
+| `npm run check:venues` | Lead times, peaks and held counts identical |
+| `perf_scenes.cjs`, AUTO, Iris Xe, ratio 1.25 | Settles on medium; 90–100 fps in every venue; no frame over 50 ms; longest frame after a venue switch 16–34 ms (258 ms on the first switch after loading) |
+| Pinned tiers, same machine | medium 62–78 fps, low 69–145, high 19–26 |
+| Contact shadows, alternated back to back with a build without them | Within noise (plaza 78/80 vs 76/78 fps) |
+| Camera controls on the GPU (held keys, 1 2 3 O, double-click, right-drag, wheel) | Every control moved the view (9–46 % of pixels changed); no page errors |
+| Scene review on the GPU: every venue at medium, New Delhi and Chinnaswamy at high | No page errors; every image checked |
+| `verify_console.cjs` | Every venue shows its banner, timeline panel, brief, warning and branch comparison; the walkthrough clicks through; no page errors; only React Three Fiber's known `THREE.Clock` warning |
+| Python suites | 47 of 48 pass with the global 3.12 site-packages on `PYTHONPATH`; the 48th (offline training) cannot load scikit-learn's DLL, which Windows Application Control now blocks. No Python changed |
+
+### Open items
+
+- `.venv` was recreated without system site-packages at 16:34, outside this session. Setting
+  `include-system-site-packages = true` in `.venv\pyvenv.cfg` restores the documented setup;
+  not changed here because someone else made the change.
+- scikit-learn's DLL is now blocked by Application Control (it loaded this morning).
+- High tier runs 20–26 fps on the Iris Xe; a cheaper ambient occlusion would help medium.
+- The first visit to a venue compiles its shaders; `renderer.compileAsync` could hide it.
