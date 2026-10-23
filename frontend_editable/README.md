@@ -75,6 +75,21 @@ threshold and horizon because it acts at the projection's first crossing.
 Adding a venue means adding one file to `src/data/venues/` and registering it in
 `index.js`. Nothing in the components is venue-specific.
 
+A venue file also sets how its scene looks: `lighting` (day or night, sun or moon, haze,
+exposure), `ground`, `structures` drawn from a small library of primitives in
+`Structures.jsx` (platforms, rails and trains, stairs, canopies, a stadium facade, water,
+pontoons, tents, flags, watchtowers, buildings with lit windows, signs, lamps, floodlights,
+barriers, instanced forests, a stage), a `floor` slope and `walkable` stairs that figures
+stand on, a crowd `palette`, muted `ambient` crowds outside the analysed region,
+`holding` areas where the model's held arrivals wait, authored close-up `views` for
+the FOCUS button, and `overlay.beaconHeight` or `gateLabelAt` where the beacon or the
+exits label would stand in front of the crowd. Textures are procedural
+(`src/lib/textures.js`).
+
+Rendering: `PostFX.jsx` adds ambient occlusion, bloom, ACES tone mapping and SMAA via
+`@react-three/postprocessing`, in its own lazily loaded chunk. RENDER QUALITY in the twin
+controls, or `?quality=low` in the URL, switches it off.
+
 Two scripts keep the reconstructions honest. `npm run check:venues` runs every timeline
 in Node and prints when the projection warns, when the crowd reaches onset density, the
 lead between them and the peaks of both branches. `npm run verify:console` (with
@@ -106,8 +121,10 @@ src/
   store/useVenueStore.js      state, polling, actions, pure derivations
   store/derived.js            memoised hooks over those derivations
   components/digitalTwin/     VenueScene, VenuePlaza, Structures, ZoneTile, CrowdParticles,
-                              CrowdFlow, CameraMasts, ExitGates, SceneEffects, CameraRig,
-                              SignalOverlay, PitchGuide, OverlayPanel
+                              SceneryCrowd, IncidentBeacon, IncidentHud, TextSprite,
+                              CrowdFlow, CameraMasts, ExitGates, SceneEffects, PostFX,
+                              CameraRig, SignalOverlay, PitchGuide, OverlayPanel
+  lib/textures.js             procedural surface, sign and facade textures
   components/dashboard/       ForecastPanel, ScenarioControls, TimelineControls,
                               IncidentBrief, ZoneTelemetry, ZoneEmptyState, CameraPanel,
                               SourcePicker, VideoStage, ResponsePanel, AssistantPanel,

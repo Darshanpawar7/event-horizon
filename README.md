@@ -304,10 +304,38 @@ How it works:
   on both; the timeline panel compares peak density, time above crush risk and people held
   outside the camera's view. Move the threshold and the warning, the action and the outcome
   all move with it.
+- **Held, not deleted.** When the operator holds or meters arrivals, the model keeps those
+  people waiting outside the view instead of letting them vanish, and the comparison
+  reports how many were held. Holding a crowd has a cost; the console shows it.
 - **Honest about what it is.** The in-app incident brief carries the reported facts with
   their sources and disputed figures, lists where the model simplifies, and says in so many
   words that nothing here claims any death was preventable by software alone. Every count
   in a reconstruction is labelled SIMULATED, the same way the plaza's are.
+
+What you see:
+
+- **Each place at the hour it happened.** Night at New Delhi station (21:15), at the
+  Sangam (about 01:30 on a new-moon night) and in Itaewon (22:08); afternoon sun at the
+  Chinnaswamy gates and in Duisburg. Sky or stars, sun or moonlight with shadows, platform
+  lights, floodlights, street lamps, lit windows and neon, river water and haze.
+- **Rendering.** Ambient occlusion, bloom, ACES tone mapping and anti-aliasing through
+  `@react-three/postprocessing`, loaded after the first frame. RENDER QUALITY in the twin
+  controls (or `?quality=low` in the URL) turns the effects off for weaker machines.
+  Every texture is drawn procedurally in the browser; nothing is downloaded.
+- **People, not markers.** Instanced human figures in clothing that fits the event (red
+  and gold the day after the title, pilgrims' saffron and white shawls, Halloween
+  costumes, a summer rave). They walk, slow to a shuffle, sway and compress as density
+  rises, climb the footbridge stairs and walk the sloping alley and ramp.
+- **The incident, unmissable.** The analysed grid is a translucent heat overlay on the
+  floor; the densest zone carries a light beacon (amber when congested, red past crush
+  risk) and the strip above the twin shows the clock, the phase and the band, with a FOCUS
+  button that flies the camera to a close-up. In the close-up the beam and the columns
+  step aside so the people show, and labels keep a readable size at any distance.
+- **Muted means not counted.** People outside the analysed region (the next platform,
+  the street beyond the camera, the festival ground) and people the model holds outside
+  the view are drawn in muted colours and never enter a count. Held queues appear where
+  they wait: on the footbridge, at the MG Road junction, upstream on the Akhara route, at
+  the tunnel portals.
 
 ![New Delhi station reconstruction](docs/screenshots/13-reconstruction-ndls.png)
 
@@ -316,16 +344,18 @@ How it works:
 Default thresholds, lead times and outcomes at the console's default +2 s horizon
 (`node scripts/venue_check.mjs 2` reproduces the table):
 
-| Venue | Warning before onset of crush-risk density | As reported · peak | With the warning acted on · peak |
-| --- | ---: | ---: | ---: |
-| New Delhi station | 4 min 11 s | 8.3 P/m² | 2.9 P/m² |
-| Chinnaswamy gates | 54 s | 9.0 P/m² | 4.8 P/m² (0 s critical) |
-| Sangam nose | 4 min 06 s | 5.1 P/m² | 2.8 P/m² |
-| Itaewon alley | 2 min 23 s | 8.9 P/m² | 2.9 P/m² |
-| Love Parade ramp | 1 min 10 s | 9.0 P/m² | 3.8 P/m² (0 s critical) |
+| Venue | Warning before onset of crush-risk density | As reported · peak | With the warning acted on · peak | Most people held outside the view when acted on |
+| --- | ---: | ---: | ---: | ---: |
+| New Delhi station | 4 min 11 s | 8.3 P/m² | 2.9 P/m² | 1,384 |
+| Chinnaswamy gates | 54 s | 9.0 P/m² | 4.8 P/m² (0 s critical) | 11,111 |
+| Sangam nose | 4 min 06 s | 5.1 P/m² | 2.8 P/m² | 9,330 |
+| Itaewon alley | 2 min 23 s | 8.9 P/m² | 2.9 P/m² | 2,614 |
+| Love Parade ramp | 1 min 10 s | 9.0 P/m² | 3.8 P/m² (0 s critical) | 20,082 |
 
 These are properties of the simulation and of its authored parameters. They are reported
-so the demo can be reproduced, not as findings about the events.
+so the demo can be reproduced, not as findings about the events. The held numbers are the
+price of the counterfactual: people kept at the platform entry, the junction, the
+upstream barricade or the tunnel portals rather than in the crush.
 
 ---
 
