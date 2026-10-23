@@ -182,3 +182,125 @@ asking; a request mentioning compression may be about deployment, not the repo.
 - Remaining console warning in headless runs: `THREE.Clock` deprecation from React Three
   Fiber internals, not from this code.
 - A Playwright screenshot review of every venue at phone width has not been done.
+
+---
+
+## 2026-10-22 (continued) — Commit and push, local run, realistic rendering of every venue
+
+### Requests
+
+1. "Commit and push everything separately in multiple commits." Done as eleven commits
+   pushed to `origin/main` (ten feature commits and one log note), no co-author trailers.
+2. "Run it locally so I can see the simulation of all the locations." The API ran on
+   127.0.0.1:8000 and the Vite dev server on 127.0.0.1:3000, opened in the default browser.
+3. "The simulation looks too basic. Make it very realistic, use good graphics, make all the
+   locations better and very accurate, and make the incident easily visible."
+
+### What was done for the visual upgrade
+
+#### Rendering
+- `SceneEffects.jsx` rewritten around each venue's `lighting` block: drei `Sky` by day,
+  `Stars` by night, hemisphere and ambient light, a sun or moon with 2048-px shadows, venue
+  fog, and the existing evidence-state moods layered on top.
+- New `PostFX.jsx`: N8AO ambient occlusion, Bloom, ACES tone mapping (explicit, because the
+  composer turns the renderer's off), Vignette and SMAA, in its own lazily loaded `postfx`
+  chunk. RENDER QUALITY HIGH/LOW in the twin controls; `?quality=low` in the URL.
+- Dependencies: `@react-three/fiber` ~9.6.1 → ~9.8.2 (needed by the post-processing
+  package), new `@react-three/postprocessing` ~3.2.2 and `postprocessing` ^6.39.5.
+- New `src/lib/textures.js`: procedural asphalt, concrete, paving, sand, grass, gravel,
+  ballast, sign plates and lit building facades. Nothing is downloaded.
+
+#### People
+- `CrowdParticles.jsx`: instanced human figures (legs, body, head) with per-venue clothing
+  palettes, a walking bob, sway and lean once crushed, and heights from the terrain.
+- New `SceneryCrowd.jsx`: muted crowds outside the analysed region (`venue.ambient`) and the
+  model's held arrivals queued where they wait (`venue.holding`), never counted.
+
+#### Model
+- `crowdModel.js`: `meter` and `close` now cap admission instead of deleting demand; held
+  people accumulate per source (`keyframe.held`). Lead times and peaks are unchanged; the
+  counterfactuals now report how many people were held (NDLS 1,384; Chinnaswamy 11,111;
+  Sangam 9,330; Itaewon 2,614; Love Parade 20,082).
+
+#### Terrain and venues
+- `venueModel.js`: `floorHeight`, `floorTilt`, `surfaceHeight`; zones carry `y` and `tilt`.
+  Floor slopes for the Itaewon alley (about 4 m over 45 m) and the Love Parade ramp; walkable
+  stairs for the three New Delhi footbridge flights and the Love Parade staircase.
+- `Structures.jsx` became a primitive library: rails, trains, stairs with parapets,
+  canopies (lit, optionally translucent), buildings with lit windows, signs, lamps,
+  floodlights, lighter barriers, fences, vehicles, tents, pontoons, a water shader, trees,
+  an instanced forest, containers, buoys, flags, watchtowers and a stage.
+- Every venue rebuilt (incidents and timelines untouched): New Delhi at night with three
+  island/side platforms, sunken tracks, the Prayagraj Express at 14, a translucent canopy over
+  the analysed island, the footbridge with three stair flights, the yellow station board and
+  two near-identical LED train boards; Chinnaswamy by afternoon with Cubbon Road, the pavement
+  and forecourt, the stadium facade, stand, roof, floodlights, gates 6 and 7, Cubbon Park,
+  police vehicles and a red-and-gold crowd; the Sangam on a new-moon night with the brown
+  Ganga and green Yamuna meeting, the sand spit, ghats, buoy rope, closed pontoon bridges,
+  bamboo barricades, Akhara camps, saffron flags, light masts and watchtowers, pilgrims and
+  bathers; Itaewon at night with the sloping alley, Hamilton Hotel, the iron wall, bars with
+  neon, World Food Street a level up, Itaewon-ro and Station Exit 1; the Love Parade ramp by
+  afternoon with the walled ramp, both tunnel halves under the railway, the festival ground,
+  stage and floats, the police cordon, the narrow staircase and the lamp post.
+
+#### Making the incident visible
+- `ZoneTile.jsx`: translucent floor heat overlay by density band (pulsing past crush risk),
+  slim glowing projection column, crush and threshold rings; follows slopes.
+- New `IncidentBeacon.jsx`: a light column and expanding ring over the densest zone, amber
+  when congested and red past crush risk, with a short fixed-size label. The beam fades
+  out as the camera comes close (12 to 40 m away, measured across the ground) and the
+  projection columns do the same (16 to 40 m), so a close-up shows people, not markers.
+  While FOCUS is on, the beam, the columns and the beacon label ease out altogether;
+  the strip above the twin keeps the reading.
+- New `IncidentHud.jsx`: clock, phase, density band and a FOCUS button over the twin.
+- `CameraRig.jsx`: flies to the focused zone; venues may author close-ups (`views`).
+
+#### Bugs found and fixed during the visual review
+- A shadowed `const base` inside the crowd loop threw a TDZ error only in the minified
+  bundle ("Cannot access 'ye' before initialization"). Renamed to `floorY`.
+- drei `Html` overlays threw `removeChild` errors when many unmounted at once on a venue
+  switch. Static labels became `TextSprite`s; dynamic overlays stay mounted and hide.
+- Floating labels drew over the control panels: `zIndexRange` lowered below the panels.
+- The NDLS canopy hid the analysed crowd (now translucent). Itaewon's buildings hid the
+  alley: a first fix looked straight down into a dark slot; the final camera looks up the
+  alley from Itaewon-ro from inside the alley's width, and the close-ups follow its axis.
+- Labels ballooned in close-ups: the Itaewon beacon label filled the view and the New
+  Delhi stair label covered the stairs. Sprites are capped at 24 px on screen, the HTML
+  labels have a fixed size, and the beacon label is short (band, zone, density, SIMULATED).
+- Close-ups were walled off by markers: the beacon beam and the projection columns now
+  fade as the camera approaches and step aside in focus mode, and the beam is at most
+  4.4 m across (it had scaled with the zone to 11 m at the Sangam). The New Delhi
+  close-up moved to the side of the stair flight, because from the front the two LED
+  boards hang across the crush site.
+- The first review after these fixes still showed red columns in two close-ups: the
+  screenshot was taken before the camera flight landed (software WebGL draws a frame
+  or two a second). The review now waits 14 s after FOCUS.
+- The exits overlay unmounted its HTML label on every toggle; it now stays mounted and
+  hides, and a venue can move it (`gateLabelAt`, used at Itaewon).
+- Night scenes were too dark: brighter hemisphere, ambient, exposure and canopy lights.
+
+#### Tooling and docs
+- `scripts/review_scenes.cjs` (`npm run review:scenes`): screenshots of every venue at T0,
+  focused, and on the counterfactual. `review-shots/` is ignored.
+- README screenshots 13 (New Delhi) and 14 (Sangam counterfactual) replaced with renders of
+  the new scene, saved as full-size PNG.
+- README: "What you see" and the held-arrivals column; frontend README: venue styling,
+  rendering and layout; playbook: rendering, terrain and scenery, decisions and new traps.
+
+### Verification
+
+| Check | Result |
+| --- | --- |
+| `npm run check:venues` | Lead times and peaks identical to before; held counts as above |
+| `npm run build` | Entry imports only `core`; `three` 948 kB, `postfx` 330 kB and `charts` 372 kB load later; 697 kB gzip and 600 kB brotli for all nine files |
+| Python suites and pyflakes | 48 tests pass; lint clean (no Python changed) |
+| `review_scenes.cjs` at high quality | All six venues, three shots each (wide at T0, FOCUS close-up, acted-on); no page errors. Every image checked: the incident is marked and visible, nothing stands in front of it, labels are readable |
+| `verify_console.cjs` | Every venue shows its banner, timeline panel, brief, warning and branch comparison; the walkthrough clicks through; no page errors. One warning: React Three Fiber's own `THREE.Clock` deprecation (third-party, known) |
+
+### Open items
+
+- This visual upgrade is not committed yet; commit when the user asks.
+- Geometry stays schematic: gate numbering at Chinnaswamy, the ramp grade at Duisburg and the
+  alley gradient at Itaewon are drawn from descriptions, and the caveats say so.
+- Software rendering in the headless review runs at a few frames a second; a real GPU is
+  needed to judge smoothness. Weaker machines can use RENDER QUALITY: LOW.

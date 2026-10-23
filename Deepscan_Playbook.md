@@ -35,9 +35,10 @@ model's simplifications. Keep it that way.
 | `frontend_editable/src/lib/crowdModel.js` | The cell-transmission crowd-flow model |
 | `frontend_editable/src/store/useVenueStore.js` | zustand store: mode, venue, scenario, playback, polling, pure `compute*` derivations |
 | `frontend_editable/src/store/derived.js` | Memoised hooks over the derivations (never pass object-building selectors to zustand) |
-| `frontend_editable/src/components/digitalTwin/` | The 3D scene, all venue-driven |
+| `frontend_editable/src/components/digitalTwin/` | The 3D scene, all venue-driven: `Structures` (primitive library), `ZoneTile` (heat overlay + column), `CrowdParticles` (analysed crowd), `SceneryCrowd` (muted ambient and held crowds), `IncidentBeacon`, `IncidentHud`, `SceneEffects` (sky, sun or moon, fog), `PostFX` (AO, bloom, ACES, SMAA), `TextSprite`, `CameraRig` |
+| `frontend_editable/src/lib/textures.js` | Procedural canvas textures: asphalt, concrete, paving, sand, grass, gravel, ballast, signs, lit facades |
 | `frontend_editable/src/components/dashboard/` | Console panels |
-| `frontend_editable/scripts/` | `venue_check.mjs` (tuning numbers, Node only), `verify_console.cjs` (headless Playwright walkthrough) |
+| `frontend_editable/scripts/` | `venue_check.mjs` (tuning numbers, Node only), `verify_console.cjs` (headless walkthrough, errors and labels), `review_scenes.cjs` (screenshots of every venue at T0: wide, focus, acted-on) |
 | `docs/screenshots/*.png` | README images; `docs/deck/photos/*.jpg` deck photos with `credits.json` |
 
 ## 3. This machine
@@ -82,11 +83,42 @@ the constant-velocity projection extrapolates those rates exactly as it would tr
 Per second: density per cell; a link sends `min(movers × share × 1.34 m/s × friction /
 length, width × 1.3 P/m/s × friction × release)` where `release = 5.4/ρ` above jam
 density; a cell receives up to `9 P/m² × area − N`, times 0.35 once past 5.4 P/m²; exits
-work the same way; arrivals that do not fit queue outside the view (`outside`).
+work the same way; arrivals that do not fit queue outside the view (`outside`). Operator
+`meter`/`close` actions cap admission (`source.cap`) rather than deleting demand, so held
+people accumulate in the per-source queue (`keyframe.held`) and the comparison reports
+them.
 Counterflow fraction (authored schedule) reduces speed and capacity by up to 55 %. Static
 fractions model seated/sleeping/waiting people. Shares, widths, rates and statics can be
 `[[t, value], …]` schedules; interventions override them from `at` onward.
 References: Weidmann 1993; Daganzo 1994; Helbing & Mukerji 2012.
+
+### Rendering
+`SceneEffects` reads the venue's `lighting` (`mode` day or night, `sun` position and
+colour, `hemisphere`, `ambient`, `fog`, `sky`, `background`, `exposure`) and modulates it
+by evidence state (fog thickens when visibility is lost, light cools when tracking is
+gone). Day venues get drei `Sky`, night venues `Stars`. `PostFX` (lazy chunk `postfx`)
+adds N8AO, Bloom, ACES ToneMapping, Vignette and SMAA; the composer switches the
+renderer's own tone mapping off, which is why ACES is an explicit pass. `quality: 'low'`
+(twin controls or `?quality=low`) skips PostFX entirely. Lamps, canopy lights, floods and
+watchtowers only create real lights at night; keep a venue under about 12 point lights.
+
+### Terrain, scenery and labels
+`venue.floor` ({low, high, rise, xMin, xMax}) slopes the floor along z; `stairs` marked
+`walkable` (optionally limited to `zones`) lift figures onto their treads.
+`surfaceHeight()` in `venueModel.js` answers both; `layoutZones` gives each zone `y` and
+`tilt`, and `ZoneTile` tilts its floor overlay but keeps its column vertical.
+`venue.ambient` rectangles hold muted scenery figures (never counted); `venue.holding`
+maps model source ids to rectangles where held arrivals queue, filled from the `front`
+edge and clipped to the rectangle (the label carries the full number). Static labels are
+`TextSprite`s; the only drei `Html` overlays left (zone badge, beacon label, gate label,
+a three-slot held-label pool) stay mounted and hide with CSS.
+Labels keep a readable size at any distance: a `TextSprite` is world-sized but never
+taller than 24 px on screen, and the `Html` overlays have a fixed CSS size (no
+`distanceFactor`). Markers get out of the way up close: the beacon beam fades in between
+12 and 40 m of horizontal camera distance, projection columns between 16 and 40 m,
+and while FOCUS is on the beam, columns and beacon label ease out altogether.
+`overlay.beaconHeight` shortens the beam where the camera looks along it (Itaewon), and
+`gateLabelAt` moves the exits label off the crowd.
 
 ### Backend scenario contract
 `POST /api/demo/scenario` accepts the five evidence states, `surge`, `crush`, or
@@ -111,7 +143,13 @@ recognises the id in `backendScenarioKey`.
 | Thresholds set near 2.2 P/m² per cell, except NDLS at 1.67 | A threshold placed at the dangerous density warns on arrival; the platform case warns on pre-conditions (a full platform with inflow) |
 | Reconstructions labelled everywhere; tolls given with disputes; sources in-app | Real victims; the console's claim is evidence and lead time, not "we would have prevented it" |
 | Kept `.jsx`, no TypeScript migration | Out of scope; the codebase convention is JSDoc |
-| Not committed | The user did not ask for a commit; the global CLAUDE.md forbids Claude co-author trailers if one is made |
+| Procedural textures, no downloaded models or images | Works offline, nothing to license, no asset weight; realism comes from lighting, post-processing, scale-correct geometry and people |
+| React Three Fiber 9.6 → 9.8 | `@react-three/postprocessing` 3.1+ needs fiber ≥ 9.7; a minor bump within 9.x, React 19.2 is inside its range |
+| Each incident at its hour (night at NDLS, the Sangam, Itaewon; day at Chinnaswamy, Duisburg) | Accuracy; night scenes rely on authored lights and bloom, so they are brighter than reality to stay readable |
+| Translucent canopy over the analysed NDLS island | An opaque roof hid the very crowd the scene is about |
+| Muted colours for scenery and held crowds | Realism without breaking provenance: only the analysed crowd is in full colour and counted |
+| Held arrivals stay in the model | A hold that makes people vanish overstates the counterfactual; the held count is its cost |
+| Commits only on request, never with a co-author trailer | The user's global CLAUDE.md overrides any harness attribution reminder |
 
 ## 6. Traps — do not repeat
 
@@ -146,7 +184,33 @@ recognises the id in `backendScenarioKey`.
 - **`npm install --no-save <pkg>` reshuffled 27 packages in `node_modules`** without
   touching the lockfile. Add tooling as a real devDependency instead, and run `npm ci`
   if the tree looks drifted.
-- **`Html` labels from drei are expensive**; keep venue labels to a handful.
+- **drei `Html` mount/unmount churn throws** `Failed to execute 'removeChild' on 'Node'`
+  (each overlay is its own React root, torn down synchronously). Use `TextSprite` for
+  static labels; keep dynamic `Html` mounted and hide it with CSS.
+- **A shadowed `const` crashes only in the browser.** `const base` declared inside a loop
+  after an outer `base` was read in the same block gave a TDZ error in the minified
+  bundle ("Cannot access 'ye' before initialization"); the build and the Node check passed.
+  Run the headless review after touching render loops.
+- **Tall structures hide the incident.** The NDLS canopy hid the platform crowd and
+  Itaewon's hotel hid the alley; look at `npm run review:scenes` output for every venue.
+- **In a narrow street, keep the camera inside the street's width.** A camera whose x lies
+  within the Itaewon alley's 3.4 m, looking along it, cannot have the floor hidden by
+  either side's buildings; one offset by a few metres sees mostly facades, and one looking
+  straight down sees a dark slot.
+- **Distance-scaled labels balloon in close-ups.** A world-sized sprite, or an `Html` with
+  `distanceFactor`, filled half the view when the camera came near (Itaewon's beacon label,
+  the New Delhi stair label). Cap sprites in screen pixels and give `Html` a fixed size.
+- **Markers become walls up close.** A camera next to a projection column, or looking
+  along the beacon beam, saw red instead of people. Fade markers by camera distance.
+- **Hanging signs block frontal close-ups.** The New Delhi LED boards hang across the
+  crush site, so its close-up looks at the stair flight from the side.
+- **A headless screenshot can catch the camera mid-flight.** Software WebGL draws a
+  frame or two a second and the flight eases per frame, so a shot taken 6 s after
+  FOCUS showed markers the landed view hides. `review_scenes.cjs` waits 14 s after
+  FOCUS; judge close-ups only from shots taken after the flight lands.
+- **Installing `@react-three/postprocessing` failed with ERESOLVE** until fiber was ≥ 9.7.
+- **`sed` one-liners that insert multi-line strings mangle files.** Use the Edit tool or a
+  Python script with explicit `\n`.
 - **The `data/` gitignore rule** is unanchored and only `frontend_editable/src/data/` is
   re-included; check `git check-ignore -v` when adding data folders elsewhere.
 
@@ -160,7 +224,10 @@ recognises the id in `backendScenarioKey`.
    warn before onset and the branch should still improve on the baseline.
 5. `npm run preview`, then `npm run verify:console` (playwright-core is a devDependency;
    it drives the installed Chrome); zero page errors; look at the screenshots.
-6. Append to `session_log.md`; update this file.
+6. After any scene or venue change, `npm run review:scenes` (about a minute per venue at
+   high quality) and look at every image: is the incident visible, is anything hiding it,
+   are labels readable?
+7. Append to `session_log.md`; update this file.
 
 ### Adding a venue
 1. Copy the closest venue file in `src/data/venues/`; keep `id`, `short`, `kind`.
@@ -171,7 +238,12 @@ recognises the id in `backendScenarioKey`.
    schedules for the day's events, counterflow ramp. Add the `intervention` branch.
 5. Register in `index.js`; run `npm run check:venues 2 --verbose` and tune until the
    reconstruction reaches its documented band around T0 and the branch improves it.
-6. Add the venue's title to `VENUES` in `scripts/verify_console.cjs`, run it, view shots.
+6. Give it `lighting`, `ground`, a crowd `palette`, `ambient` and `holding` rectangles and
+   `views` for its crush zones; keep night venues under about 12 lights. Set
+   `overlay.beaconHeight` or `gateLabelAt` if the beam or the exits label stands in front
+   of the crowd from the venue camera.
+7. Add the venue's title to `VENUES` in `scripts/verify_console.cjs` and
+   `scripts/review_scenes.cjs`, run both, view the shots.
 
 ### Tuning a timeline (what moves what)
 - Warning time ← threshold vs the density of the cell that fills first.
@@ -191,7 +263,7 @@ recognises the id in `backendScenarioKey`.
 
 ## 9. Open items for later sessions
 
-- Commit the 2026-10-22 work if the user wants it committed.
+- Commit the visual upgrade (second half of 2026-10-22) when the user asks.
 - Phone-width review of the console; the twin overlays are dense below ~1080 px.
 - A trained model or real analytics adapter behind the API remains the real roadmap.
 - The deck photos in `docs/deck/photos/` have no deck yet.
