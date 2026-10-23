@@ -1,9 +1,33 @@
 import { useVenueStore, isDemo, thresholdConfig } from '../../store/useVenueStore';
-import { useForecast, useVenue } from '../../store/derived';
+import { useForecast, useVenue, useZones } from '../../store/derived';
+import { overviewView, topView, incidentZone } from '../../data/cameraViews';
 import OverlayPanel from '../digitalTwin/OverlayPanel';
 import { NEO, MONO, densityBand } from '../../theme';
 
 const HORIZONS = [1, 2, 3];
+
+const QUALITIES = [
+  { value: 'auto', label: 'AUTO', title: 'Steps between tiers to keep the view smooth on this machine' },
+  { value: 'high', label: 'HIGH', title: 'Ambient occlusion, bloom, anti-aliasing and full resolution' },
+  { value: 'medium', label: 'MED', title: 'Bloom and anti-aliasing, no ambient occlusion' },
+  { value: 'low', label: 'LOW', title: 'No screen effects, reduced resolution' },
+];
+const TIER_LABELS = { high: 'HIGH', medium: 'MED', low: 'LOW' };
+
+function toggleStyle(active) {
+  return {
+    border: `2px solid ${NEO.ink}`,
+    background: active ? NEO.ink : NEO.surface,
+    color: active ? NEO.surface : NEO.ink,
+    fontFamily: MONO,
+    fontSize: '8px',
+    fontWeight: 900,
+    padding: '5px 0',
+    cursor: 'pointer',
+    borderRadius: '2px',
+    letterSpacing: '0.02em',
+  };
+}
 
 const OVERLAYS = [
   { key: 'heat', label: 'HEAT', color: NEO.crimson },
@@ -28,9 +52,16 @@ export default function ViewControls() {
   const setThreshold = useVenueStore((state) => state.setThreshold);
   const toggleOverlay = useVenueStore((state) => state.toggleOverlay);
   const quality = useVenueStore((state) => state.quality);
+  const renderTier = useVenueStore((state) => state.renderTier);
   const setQuality = useVenueStore((state) => state.setQuality);
+  const focusZone = useVenueStore((state) => state.focusZone);
+  const focusOn = useVenueStore((state) => state.focusOn);
+  const requestCamera = useVenueStore((state) => state.requestCamera);
+  const autoOrbit = useVenueStore((state) => state.autoOrbit);
+  const setAutoOrbit = useVenueStore((state) => state.setAutoOrbit);
   const scenario = useVenueStore((state) => state.scenario);
   const venue = useVenue();
+  const zones = useZones();
   const forecast = useForecast();
 
   const available = forecast.status !== 'UNAVAILABLE';
@@ -153,32 +184,57 @@ export default function ViewControls() {
         </div>
       </div>
 
-      {/* Render quality: ambient occlusion, bloom and anti-aliasing on HIGH */}
+      {/* Render quality: AUTO keeps the frame rate smooth; the others pin a tier */}
       <div style={{ marginBottom: '10px' }}>
-        <div style={captionStyle}>RENDER QUALITY</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '4px' }}>
-          {['high', 'low'].map((value) => (
+        <div style={captionStyle}>
+          RENDER QUALITY{quality === 'auto' && <span style={{ color: NEO.grey }}> · AUTO CHOSE {TIER_LABELS[renderTier]}</span>}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '4px' }}>
+          {QUALITIES.map(({ value, label, title }) => (
             <button
               key={value}
               type="button"
+              title={title}
               onClick={() => setQuality(value)}
               aria-pressed={quality === value}
-              style={{
-                border: `2px solid ${NEO.ink}`,
-                background: quality === value ? NEO.ink : NEO.surface,
-                color: quality === value ? NEO.surface : NEO.ink,
-                fontFamily: MONO,
-                fontSize: '9px',
-                fontWeight: 900,
-                padding: '5px 0',
-                cursor: 'pointer',
-                borderRadius: '2px',
-                textTransform: 'uppercase',
-              }}
+              style={toggleStyle(quality === value)}
             >
-              {value}
+              {label}
             </button>
           ))}
+        </div>
+      </div>
+
+      {/* Camera presets for presenting; the same views are on keys 1, 2, 3 and O */}
+      <div style={{ marginBottom: '10px' }}>
+        <div style={captionStyle}>CAMERA</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '4px' }}>
+          <button type="button" title="The venue's vantage point (key 1)" onClick={() => requestCamera(overviewView(venue))} style={toggleStyle(false)}>
+            OVERVIEW
+          </button>
+          <button
+            type="button"
+            title="Close-up of the densest zone (key 2)"
+            onClick={() => {
+              const id = incidentZone(zones);
+              if (id && focusZone !== id) focusOn(id);
+            }}
+            style={toggleStyle(Boolean(focusZone))}
+          >
+            INCIDENT
+          </button>
+          <button type="button" title="Plan view straight down (key 3)" onClick={() => requestCamera(topView(venue))} style={toggleStyle(false)}>
+            TOP
+          </button>
+          <button
+            type="button"
+            title="Slowly circle the point in view (key O)"
+            onClick={() => setAutoOrbit(!autoOrbit)}
+            aria-pressed={autoOrbit}
+            style={toggleStyle(autoOrbit)}
+          >
+            ORBIT
+          </button>
         </div>
       </div>
 

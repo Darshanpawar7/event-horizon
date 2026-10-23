@@ -14,6 +14,8 @@ import SceneEffects from './SceneEffects';
 import IncidentBeacon from './IncidentBeacon';
 import SignalOverlay from './SignalOverlay';
 import CameraRig from './CameraRig';
+import CameraInput from './CameraInput';
+import QualityGovernor from './QualityGovernor';
 import IncidentHud from './IncidentHud';
 import ViewControls from '../dashboard/ViewControls';
 import OverlayPanel from './OverlayPanel';
@@ -23,6 +25,20 @@ import { NEO, MONO, HARD, DENSITY_BANDS } from '../../theme';
 // Ambient occlusion, bloom and tone mapping arrive after the scene has drawn
 // its first frames; until then the renderer's own ACES tone mapping applies.
 const PostFX = lazy(() => import('./PostFX'));
+
+/**
+ * Canvas resolution per render tier, against the screen's own pixel ratio:
+ * the screen's full resolution on high (React Three Fiber's usual limit of
+ * 2×; the user prefers full detail on high-DPI screens), one canvas pixel per
+ * CSS pixel on medium, three quarters of that on low. Pixels are most of the
+ * cost on an integrated GPU, which is why AUTO settles below high there.
+ */
+function pixelRatio(tier) {
+  const device = typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1;
+  if (tier === 'high') return Math.min(device, 2);
+  if (tier === 'medium') return Math.min(device, 1);
+  return Math.min(device, 1) * 0.75;
+}
 
 const LEGEND = [
   { color: NEO.green, label: 'SPARSE' },
@@ -68,6 +84,7 @@ export default function VenueScene() {
   const observation = useVenueStore(selectObservation);
   const demo = useVenueStore(isDemo);
   const horizon = useVenueStore((state) => state.horizon);
+  const tier = useVenueStore((state) => state.renderTier);
   const night = venue.lighting?.mode === 'night';
 
   const simulatedGrid = forecast.origin !== 'observed';
@@ -105,12 +122,14 @@ export default function VenueScene() {
 
       <Canvas
         shadows="percentage"
+        flat
+        dpr={pixelRatio(tier)}
         camera={{ position: initial.position, fov: 42, near: 0.5, far: 1500 }}
         gl={{ antialias: true, alpha: false, powerPreference: 'high-performance' }}
       >
         {/* 'percentage' = PCFShadowMap; three r184 deprecated the soft variant the
-            bare `shadows` flag selects. Device pixel ratio stays at React Three
-            Fiber's default so high-DPI screens render at full resolution. */}
+            bare `shadows` flag selects. */}
+        <QualityGovernor />
         <SceneEffects />
         <UnstableView>
           <VenuePlaza />
@@ -121,16 +140,25 @@ export default function VenueScene() {
           <CrowdFlow />
           <IncidentBeacon />
         </UnstableView>
+        {/* Map-style orbit: right-drag (or Shift-drag) moves across the ground
+            rather than the screen plane, and the wheel zooms toward the pointer,
+            so the point being looked at can be moved anywhere. */}
         <OrbitControls
           makeDefault
           enableDamping
-          dampingFactor={0.05}
-          maxPolarAngle={Math.PI / 2 - 0.05}
-          minDistance={6}
-          maxDistance={260}
+          dampingFactor={0.08}
+          screenSpacePanning={false}
+          zoomToCursor
+          rotateSpeed={0.8}
+          panSpeed={1.1}
+          zoomSpeed={1.1}
+          maxPolarAngle={Math.PI / 2 - 0.03}
+          minDistance={3}
+          maxDistance={320}
           target={initial.target}
         />
         <CameraRig />
+        <CameraInput />
         <Suspense fallback={null}>
           <PostFX night={night} />
         </Suspense>
@@ -191,11 +219,14 @@ export default function VenueScene() {
         <SignalOverlay />
       </div>
 
-      <div style={{ position: 'absolute', bottom: 52, right: 16, zIndex: 10 }}>
+      <div style={{ position: 'absolute', bottom: 70, right: 16, zIndex: 10 }}>
         <PitchGuide />
       </div>
 
-      <div style={tipStyle}>DRAG TO ROTATE • SCROLL TO ZOOM • RIGHT-CLICK DRAG TO PAN • CLICK A ZONE</div>
+      <div style={tipStyle}>
+        <div>DRAG ROTATE • RIGHT- OR SHIFT-DRAG MOVE • SCROLL ZOOM TO POINTER • DOUBLE-CLICK FLY THERE</div>
+        <div style={{ color: NEO.grey }}>WASD / ARROWS MOVE • Q E TURN • + − ZOOM • 1 OVERVIEW • 2 INCIDENT • 3 TOP • O ORBIT</div>
+      </div>
     </div>
   );
 }
@@ -302,5 +333,6 @@ const tipStyle = {
   color: NEO.ink,
   borderRadius: 4,
   letterSpacing: '0.05em',
+  lineHeight: 1.6,
   boxShadow: HARD.shadowSm,
 };
