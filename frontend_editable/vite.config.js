@@ -144,6 +144,8 @@ function vendorChunk(id) {
   if (!id.includes('node_modules')) return undefined;
   const name = packageName(id);
   if (CORE_PACKAGES.has(name)) return 'core';
+  // Post-processing loads after the scene has rendered, so it gets a chunk of its own.
+  if (name === 'postprocessing' || name === 'n8ao' || name === '@react-three/postprocessing') return 'postfx';
   if (name === 'three' || name === 'three-stdlib' || name === 'maath' || name.startsWith('@react-three/')) {
     return 'three';
   }

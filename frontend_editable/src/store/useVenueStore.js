@@ -35,6 +35,15 @@ let signalTimers = [];
 let clockTimer = null;
 
 /**
+ * Render quality. `?quality=low` in the URL turns post-processing off, which
+ * the headless verification uses and which a weak laptop can use too.
+ */
+function initialQuality() {
+  if (typeof window === 'undefined') return 'high';
+  return new URLSearchParams(window.location.search).get('quality') === 'low' ? 'low' : 'high';
+}
+
+/**
  * Default concentration threshold and slider bounds for a scenario on a
  * venue. Timelines carry their own; evidence states scale with cell area so
  * the same density reads the same on a plaza and in an alley.
@@ -107,7 +116,11 @@ export const useVenueStore = create((set, get) => ({
   // ---- twin view controls ------------------------------------------------
   horizon: 2,
   threshold: scenarioThreshold('clear', getVenue(DEFAULT_VENUE_ID)).threshold,
-  overlays: { density: true, trajectories: true, flow: true, gates: true, cameras: true },
+  overlays: { density: true, trajectories: true, flow: true, gates: true, cameras: true, heat: true },
+  /** 'high' renders ambient occlusion, bloom and anti-aliasing; 'low' skips them. */
+  quality: initialQuality(),
+  /** Zone the camera is flown to and held on; null returns to the venue's vantage point. */
+  focusZone: null,
 
   // ---- timeline playback -------------------------------------------------
   // Only meaningful while a timeline scenario is selected; `clockT` is seconds
@@ -168,7 +181,7 @@ export const useVenueStore = create((set, get) => ({
     if (get().venueId === venueId) return;
     const venue = getVenue(venueId);
     stopClockTimer();
-    set({ venueId, selectedZone: null, checks: {}, acknowledgedId: null, answer: null, signals: [] });
+    set({ venueId, selectedZone: null, focusZone: null, checks: {}, acknowledgedId: null, answer: null, signals: [] });
     get().setScenario(venue.defaultScenario || 'clear');
     get().pushSignal(
       'Venue',
@@ -351,6 +364,9 @@ export const useVenueStore = create((set, get) => ({
     set((state) => ({ selectedZone: state.selectedZone === zoneId ? null : zoneId })),
 
   setHorizon: (horizon) => set({ horizon }),
+  setQuality: (quality) => set({ quality }),
+  /** Fly the twin camera to a zone, or back to the venue's vantage point with null. */
+  focusOn: (zoneId) => set((state) => ({ focusZone: state.focusZone === zoneId ? null : zoneId })),
   setThreshold: (threshold) => set({ threshold }),
   toggleOverlay: (key) =>
     set((state) => ({ overlays: { ...state.overlays, [key]: !state.overlays[key] } })),

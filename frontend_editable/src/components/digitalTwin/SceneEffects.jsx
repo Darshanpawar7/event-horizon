@@ -1,22 +1,54 @@
 import { useRef, useMemo, useEffect } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
+import { Sky, Stars } from '@react-three/drei';
 import * as THREE from 'three';
 import { useVenueStore } from '../../store/useVenueStore';
 import { useForecast, useTimeline, useVenue } from '../../store/derived';
 import { NEO } from '../../theme';
 
 /**
- * Lighting, fog and the operations hub mesh. Each evidence state gets a
- * distinct scene mood so a degraded view is legible before reading any text;
- * timelines carry their own mood (late egress light, or the darker crush).
+ * Lighting, sky and atmosphere for the active venue, plus the operations hub
+ * and the alert light.
+ *
+ * Each venue states the time of day its incident happened: a sunlit afternoon
+ * at the stadium and in Duisburg, night at New Delhi station, the Kumbh and
+ * Itaewon. The venue's `lighting` block sets the base; the evidence state then
+ * modulates it so a degraded view is legible before reading any text — fog
+ * thickens when visibility is lost, the light cools when tracking is gone,
+ * and a crush reconstruction leans warm and heavy.
  */
+
+const DEFAULT_LIGHTING = {
+  mode: 'day',
+  sun: [60, 80, 40],
+  sunColor: '#FFF4E0',
+  sunIntensity: 2.4,
+  hemisphere: { sky: '#CFE3FF', ground: '#8C7A62', intensity: 0.9 },
+  ambient: 0.25,
+  fog: { color: '#DCE3EA', density: 0.0022 },
+  sky: { turbidity: 6, rayleigh: 1.6, mieCoefficient: 0.004, mieDirectionalG: 0.8 },
+  exposure: 1.0,
+};
+
+/** Evidence-state modifiers applied on top of the venue's lighting. */
+const MOODS = {
+  clear: { fog: 1, ambient: 1, tint: '#FFFFFF' },
+  tracking: { fog: 2.6, ambient: 0.75, tint: '#C9D4E3' },
+  visibility: { fog: 5, ambient: 0.6, tint: '#B8BEC6' },
+  camera: { fog: 2.2, ambient: 0.9, tint: '#FFE2A8' },
+  collective: { fog: 1.6, ambient: 1.05, tint: '#FFB98A' },
+  surge: { fog: 1.3, ambient: 1.0, tint: '#FFD3A0' },
+  crush: { fog: 1.9, ambient: 0.95, tint: '#FF9C7A' },
+};
+
 export default function SceneEffects() {
-  const { scene } = useThree();
+  const { scene, gl } = useThree();
   const venue = useVenue();
   const forecast = useForecast();
   const timeline = useTimeline();
-  // Demo mode names the mood directly; backend mode maps the reported
-  // visibility and motion fields onto the same moods.
+  const lighting = { ...DEFAULT_LIGHTING, ...(venue.lighting || {}) };
+  const night = lighting.mode === 'night';
+
   const stateKey = useVenueStore((state) => {
     if (state.mode === 'demo') return state.scenario;
     const observation = state.status?.observation;
@@ -27,136 +59,111 @@ export default function SceneEffects() {
     if (observation.motion_state === 'UNUSUAL COLLECTIVE MOVEMENT') return 'collective';
     return 'clear';
   });
-  const moodKey = timeline ? (timeline.kind === 'authored' ? timeline.id : timeline.intervention ? 'surge' : 'crush') : stateKey;
+  const moodKey = timeline
+    ? timeline.kind === 'authored'
+      ? timeline.id
+      : timeline.intervention
+        ? 'surge'
+        : 'crush'
+    : stateKey;
+  const mood = MOODS[moodKey] || MOODS.clear;
 
+  const hemisphereRef = useRef(null);
   const ambientRef = useRef(null);
   const sunRef = useRef(null);
   const alertLightRef = useRef(null);
 
-  useEffect(() => {
-    scene.background = new THREE.Color(NEO.ground);
-    scene.fog = new THREE.FogExp2(NEO.ground, 0.002);
-  }, [scene]);
-
-  const MOODS = useMemo(
+  const targets = useMemo(
     () => ({
-      clear: {
-        background: new THREE.Color(NEO.ground),
-        fogColor: new THREE.Color(NEO.ground),
-        fogDensity: 0.003,
-        ambientIntensity: 1.0,
-        sunColor: new THREE.Color('#ffffff'),
-        sunIntensity: 0.8,
-      },
-      tracking: {
-        background: new THREE.Color('#D8DBDC'),
-        fogColor: new THREE.Color('#D8DBDC'),
-        fogDensity: 0.009,
-        ambientIntensity: 0.7,
-        sunColor: new THREE.Color('#cbd5e1'),
-        sunIntensity: 0.35,
-      },
-      visibility: {
-        background: new THREE.Color('#C9CDD0'),
-        fogColor: new THREE.Color('#C9CDD0'),
-        fogDensity: 0.015,
-        ambientIntensity: 0.5,
-        sunColor: new THREE.Color('#b8bec4'),
-        sunIntensity: 0.25,
-      },
-      camera: {
-        background: new THREE.Color('#E4DCCE'),
-        fogColor: new THREE.Color('#E4DCCE'),
-        fogDensity: 0.009,
-        ambientIntensity: 0.85,
-        sunColor: new THREE.Color('#FFE082'),
-        sunIntensity: 0.6,
-      },
-      collective: {
-        background: new THREE.Color('#EAD5C3'),
-        fogColor: new THREE.Color('#EAD5C3'),
-        fogDensity: 0.006,
-        ambientIntensity: 1.1,
-        sunColor: new THREE.Color('#FF8833'),
-        sunIntensity: 1.1,
-      },
-      // Timeline scenarios: an egress reads as late light, and a crush
-      // reconstruction darkens further so the twin does not look calm while
-      // the console is warning about the band the crowd is in.
-      surge: {
-        background: new THREE.Color('#E9DCC9'),
-        fogColor: new THREE.Color('#E9DCC9'),
-        fogDensity: 0.005,
-        ambientIntensity: 1.0,
-        sunColor: new THREE.Color('#FFB25E'),
-        sunIntensity: 0.95,
-      },
-      crush: {
-        background: new THREE.Color('#DCC4BC'),
-        fogColor: new THREE.Color('#DCC4BC'),
-        fogDensity: 0.008,
-        ambientIntensity: 0.9,
-        sunColor: new THREE.Color('#E2653C'),
-        sunIntensity: 1.0,
-      },
+      fogColor: new THREE.Color(lighting.fog.color),
+      sunColor: new THREE.Color(lighting.sunColor).lerp(new THREE.Color(mood.tint), 0.35),
+      background: new THREE.Color(night ? lighting.background || '#0B1020' : lighting.fog.color),
     }),
-    [],
+    [lighting.fog.color, lighting.sunColor, lighting.background, mood.tint, night],
   );
 
-  const mood = MOODS[moodKey] || MOODS.clear;
-  const reviewing = forecast.status === 'REVIEW CONCENTRATION';
-  const hubColor = forecast.status === 'UNAVAILABLE' ? NEO.grey : reviewing ? NEO.red : NEO.green;
-  // Fog thins on venues that span more world units than the plaza.
-  const fogScale = Math.min(1, 140 / (venue.ground?.size ?? 140));
+  useEffect(() => {
+    scene.fog = new THREE.FogExp2(lighting.fog.color, lighting.fog.density);
+    // At night a dark dome; by day the Sky component shows through.
+    scene.background = night ? new THREE.Color(lighting.background || '#0B1020') : null;
+    gl.toneMappingExposure = lighting.exposure * (night ? 1.15 : 1);
+    return () => {
+      scene.fog = null;
+    };
+  }, [scene, gl, lighting.fog.color, lighting.fog.density, lighting.background, lighting.exposure, night]);
 
   useFrame((state) => {
     const time = state.clock.getElapsedTime();
+    const ease = 0.04;
 
-    if (ambientRef.current) {
-      ambientRef.current.intensity = THREE.MathUtils.lerp(
-        ambientRef.current.intensity,
-        mood.ambientIntensity,
-        0.03,
+    if (hemisphereRef.current) {
+      hemisphereRef.current.intensity = THREE.MathUtils.lerp(
+        hemisphereRef.current.intensity,
+        lighting.hemisphere.intensity * mood.ambient,
+        ease,
       );
     }
-
+    if (ambientRef.current) {
+      ambientRef.current.intensity = THREE.MathUtils.lerp(ambientRef.current.intensity, lighting.ambient * mood.ambient, ease);
+    }
     if (sunRef.current) {
-      sunRef.current.intensity = THREE.MathUtils.lerp(sunRef.current.intensity, mood.sunIntensity, 0.03);
-      sunRef.current.color.lerp(mood.sunColor, 0.03);
+      sunRef.current.intensity = THREE.MathUtils.lerp(sunRef.current.intensity, lighting.sunIntensity * mood.ambient, ease);
+      sunRef.current.color.lerp(targets.sunColor, ease);
     }
-
-    if (scene.background instanceof THREE.Color) {
-      scene.background.lerp(mood.background, 0.03);
-    }
-
     if (scene.fog instanceof THREE.FogExp2) {
-      scene.fog.color.lerp(mood.fogColor, 0.03);
-      scene.fog.density = THREE.MathUtils.lerp(scene.fog.density, mood.fogDensity * fogScale, 0.03);
+      scene.fog.color.lerp(targets.fogColor, ease);
+      scene.fog.density = THREE.MathUtils.lerp(scene.fog.density, lighting.fog.density * mood.fog, ease);
     }
-
+    if (night && scene.background instanceof THREE.Color) {
+      scene.background.lerp(targets.background, ease);
+    }
     if (alertLightRef.current) {
-      alertLightRef.current.intensity = reviewing ? (Math.sin(time * 6) * 0.4 + 0.6) * 3.0 : 0;
+      const reviewing = forecast.status === 'REVIEW CONCENTRATION';
+      alertLightRef.current.intensity = reviewing ? (Math.sin(time * 6) * 0.4 + 0.6) * (night ? 40 : 18) : 0;
     }
   });
 
+  const reviewing = forecast.status === 'REVIEW CONCENTRATION';
+  const hubColor = forecast.status === 'UNAVAILABLE' ? NEO.grey : reviewing ? NEO.red : NEO.green;
   const hub = venue.controlRoom;
+  const shadowExtent = Math.max(70, (venue.ground?.size ?? 140) / 2);
 
   return (
     <group>
-      <ambientLight ref={ambientRef} color="#ffffff" intensity={1.0} />
+      {night ? (
+        <Stars radius={260} depth={60} count={2400} factor={3.2} saturation={0} fade speed={0.4} />
+      ) : (
+        <Sky
+          distance={450000}
+          sunPosition={lighting.sun}
+          turbidity={lighting.sky.turbidity}
+          rayleigh={lighting.sky.rayleigh}
+          mieCoefficient={lighting.sky.mieCoefficient}
+          mieDirectionalG={lighting.sky.mieDirectionalG}
+        />
+      )}
+
+      <hemisphereLight
+        ref={hemisphereRef}
+        args={[lighting.hemisphere.sky, lighting.hemisphere.ground, lighting.hemisphere.intensity]}
+      />
+      <ambientLight ref={ambientRef} intensity={lighting.ambient} />
       <directionalLight
         ref={sunRef}
         castShadow
-        position={[24, 38, 24]}
-        color="#ffffff"
-        intensity={0.8}
-        shadow-mapSize-width={1024}
-        shadow-mapSize-height={1024}
-        shadow-camera-far={200}
-        shadow-camera-left={-70}
-        shadow-camera-right={70}
-        shadow-camera-top={70}
-        shadow-camera-bottom={-70}
+        position={lighting.sun}
+        color={lighting.sunColor}
+        intensity={lighting.sunIntensity}
+        shadow-mapSize-width={2048}
+        shadow-mapSize-height={2048}
+        shadow-bias={-0.00025}
+        shadow-normalBias={0.02}
+        shadow-camera-near={1}
+        shadow-camera-far={400}
+        shadow-camera-left={-shadowExtent}
+        shadow-camera-right={shadowExtent}
+        shadow-camera-top={shadowExtent}
+        shadow-camera-bottom={-shadowExtent}
       />
 
       {/* Operations hub — the physical counterpart of this console */}
@@ -172,13 +179,12 @@ export default function SceneEffects() {
           </mesh>
           <mesh position={[0, 0.5, 1.11]}>
             <planeGeometry args={[2.4, 1.0]} />
-            <meshBasicMaterial color="#111827" />
+            <meshStandardMaterial color="#9ECBFF" emissive="#9ECBFF" emissiveIntensity={night ? 1.6 : 0.3} />
           </mesh>
           <mesh position={[0, 1.5, 0]}>
             <sphereGeometry args={[0.16, 16, 16]} />
-            <meshBasicMaterial color={hubColor} />
+            <meshStandardMaterial color={hubColor} emissive={hubColor} emissiveIntensity={2} />
           </mesh>
-          {/* Mast carrying the venue-wide reference antenna */}
           <mesh castShadow position={[2.4, 2.2, -1.4]}>
             <cylinderGeometry args={[0.07, 0.12, 5.2]} />
             <meshStandardMaterial color={NEO.ink} metalness={0.95} roughness={0.2} />
@@ -190,7 +196,7 @@ export default function SceneEffects() {
         </group>
       )}
 
-      <pointLight ref={alertLightRef} color={NEO.red} intensity={0} distance={40} position={[0, 6, 6]} />
+      <pointLight ref={alertLightRef} color={NEO.red} intensity={0} distance={48} decay={2} position={[0, 7, 0]} />
     </group>
   );
 }

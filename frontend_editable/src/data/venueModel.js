@@ -130,11 +130,86 @@ export function scenarioThreshold(scenario, venue) {
  * @property {number} col 1..3
  * @property {number} x world centre, metres
  * @property {number} z world centre, metres
+ * @property {number} y floor height at the centre, metres
+ * @property {number} tilt floor slope about x, radians
  * @property {number} width metres across (x)
  * @property {number} depth metres along (z)
  * @property {number} area m² the cell stands for
  * @property {string} label venue-specific name
  */
+
+// ---------------------------------------------------------------------------
+// Terrain. Most venues are flat. A venue may declare a `floor` slope (the
+// Itaewon alley climbs toward World Food Street; the Love Parade ramp climbs
+// to the festival ground) and `stairs` structures marked `walkable` (the New
+// Delhi footbridge stairs). Figures stand on these surfaces and zone tiles
+// follow the slope, so a crowd on a staircase is drawn on the staircase.
+// ---------------------------------------------------------------------------
+
+/**
+ * Height of the venue floor at a point, metres above the base level.
+ * `floor`: {low, high, rise, xMin?, xMax?} — a slope along z from `low`
+ * (height 0) to `high` (height `rise`), clamped beyond both ends.
+ * @param {object} venue
+ * @param {number} x
+ * @param {number} z
+ */
+export function floorHeight(venue, x, z) {
+  const floor = venue.floor;
+  if (!floor) return 0;
+  if (x < (floor.xMin ?? -Infinity) || x > (floor.xMax ?? Infinity)) return 0;
+  const t = (floor.low - z) / (floor.low - floor.high);
+  return floor.rise * Math.min(1, Math.max(0, t));
+}
+
+/** Tilt (radians about x) of the floor at a point; 0 off the slope. */
+export function floorTilt(venue, x, z) {
+  const floor = venue.floor;
+  if (!floor) return 0;
+  if (x < (floor.xMin ?? -Infinity) || x > (floor.xMax ?? Infinity)) return 0;
+  const lo = Math.min(floor.low, floor.high);
+  const hi = Math.max(floor.low, floor.high);
+  if (z <= lo || z >= hi) return 0;
+  return Math.atan(floor.rise / (floor.low - floor.high));
+}
+
+const walkableCache = new Map();
+
+function walkableStairs(venue) {
+  if (!walkableCache.has(venue.id)) {
+    walkableCache.set(
+      venue.id,
+      (venue.structures || []).filter((item) => item.type === 'stairs' && item.walkable),
+    );
+  }
+  return walkableCache.get(venue.id);
+}
+
+/**
+ * Height a person stands at: the floor slope, or the tread of a walkable
+ * staircase when the point is on one. A staircase may limit itself to the
+ * zones whose crowd actually uses it (`zones`), so people standing beside or
+ * under a flight are not lifted onto it.
+ * @param {object} venue
+ * @param {number} x
+ * @param {number} z
+ * @param {string|null} [zoneId]
+ */
+export function surfaceHeight(venue, x, z, zoneId = null) {
+  let height = floorHeight(venue, x, z);
+  for (const stair of walkableStairs(venue)) {
+    if (stair.zones && zoneId && !stair.zones.includes(zoneId)) continue;
+    if (stair.zones && !zoneId) continue;
+    if (Math.abs(x - stair.x) > stair.w / 2) continue;
+    const climb = stair.dir * (z - stair.z) + stair.run / 2;
+    if (climb < 0 || climb > stair.run) continue;
+    const steps = stair.steps ?? 12;
+    const tread = stair.run / steps;
+    const step = Math.min(steps, Math.floor(climb / tread) + 1);
+    height = Math.max(height, (stair.y ?? 0) + (stair.rise / steps) * step);
+  }
+  return height;
+}
 
 const layouts = new Map();
 
@@ -151,12 +226,17 @@ export function layoutZones(venue) {
   const zones = ZONE_IDS.map((id, index) => {
     const row = Math.floor(index / GRID_SIZE);
     const col = index % GRID_SIZE;
+    const x = (col - 1) * pitchX;
+    const z = (row - 1) * pitchZ;
     return {
       id,
       row: row + 1,
       col: col + 1,
-      x: (col - 1) * pitchX,
-      z: (row - 1) * pitchZ,
+      x,
+      z,
+      // Floor height and slope at the cell centre (0 on flat venues).
+      y: floorHeight(venue, x, z),
+      tilt: floorTilt(venue, x, z),
       width: venue.cell.width,
       depth: venue.cell.depth,
       area: venue.cellAreas?.[index] ?? venue.cell.width * venue.cell.depth,

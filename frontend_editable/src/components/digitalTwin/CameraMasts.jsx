@@ -1,10 +1,10 @@
 import { useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { useVenueStore, selectObservation, isDemo } from '../../store/useVenueStore';
 import { useVenue } from '../../store/derived';
-import { NEO, MONO } from '../../theme';
+import TextSprite from './TextSprite';
+import { NEO } from '../../theme';
 
 const MAST_HEIGHT = 6.4;
 
@@ -39,7 +39,7 @@ function CameraMast({ mast, active, state, onSelect }) {
   };
 
   return (
-    <group position={[mast.x, 0, mast.z]} rotation={[0, mast.rotation, 0]}>
+    <group position={[mast.x, mast.y ?? 0, mast.z]} rotation={[0, mast.rotation, 0]}>
       {/* Base pad */}
       <mesh receiveShadow position={[0, -0.55, 0]}>
         <boxGeometry args={[2, 0.12, 2]} />
@@ -95,15 +95,13 @@ function CameraMast({ mast, active, state, onSelect }) {
         </mesh>
       </group>
 
-      {(active || hovered) && (
-        <Html position={[0, MAST_HEIGHT + 0.9, 0]} center distanceFactor={42} pointerEvents="none">
-          <div style={labelStyle}>
-            <span style={{ width: 6, height: 6, borderRadius: '50%', background: statusColor }} />
-            {mast.label}
-            <span style={{ color: NEO.grey }}>{active ? 'SELECTED' : 'AVAILABLE'}</span>
-          </div>
-        </Html>
-      )}
+      <TextSprite
+        text={`${mast.label} · ${active ? 'SELECTED' : 'AVAILABLE'}`}
+        position={[0, MAST_HEIGHT + 0.9, 0]}
+        height={0.7}
+        border={statusColor}
+        visible={active || hovered}
+      />
     </group>
   );
 }
@@ -144,20 +142,3 @@ export default function CameraMasts() {
     </group>
   );
 }
-
-const labelStyle = {
-  background: NEO.surface,
-  border: `2px solid ${NEO.ink}`,
-  padding: '4px 9px',
-  fontFamily: MONO,
-  fontSize: '9px',
-  fontWeight: 900,
-  color: NEO.ink,
-  whiteSpace: 'nowrap',
-  textTransform: 'uppercase',
-  letterSpacing: '0.06em',
-  boxShadow: `2px 2px 0px 0px ${NEO.ink}`,
-  display: 'flex',
-  alignItems: 'center',
-  gap: '6px',
-};

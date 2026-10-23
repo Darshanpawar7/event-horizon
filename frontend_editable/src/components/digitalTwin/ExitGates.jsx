@@ -28,7 +28,7 @@ function Gate({ gate, ratio, index }) {
   });
 
   return (
-    <group position={[gate.x, 0, gate.z]} rotation={[0, gate.rotation || 0, 0]}>
+    <group position={[gate.x, gate.y ?? 0, gate.z]} rotation={[0, gate.rotation || 0, 0]}>
       {/* Gate pad */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.56, 0]} receiveShadow>
         <planeGeometry args={[padWidth, Math.min(5, padWidth)]} />
@@ -66,7 +66,8 @@ function Gate({ gate, ratio, index }) {
 /**
  * The venue's exits — gates on a plaza, a stair flight, the ends of an alley,
  * the water's edge — each pulsing with the projected occupancy of the zone
- * that feeds it. A venue with a `gateLine` also gets the canopy and columns.
+ * that feeds it. A venue with a `gateLine` also gets the canopy and columns;
+ * `gateLabelAt` moves the label off the crowd when the default spot is busy.
  */
 export default function ExitGates() {
   const venue = useVenue();
@@ -78,18 +79,22 @@ export default function ExitGates() {
   const open = zones.filter((zone) => feeding.has(zone.id) && zone.ratio != null).length;
   const known = open > 0;
 
-  const label = venue.gateLine
+  const label = venue.gateLabelAt
+    ? venue.gateLabelAt
+    : venue.gateLine
     ? [venue.gateLine.x, 6.1, venue.gateLine.z]
     : [
         venue.gates.reduce((sum, gate) => sum + gate.x, 0) / Math.max(1, venue.gates.length),
-        4.2,
+        4.2 + venue.gates.reduce((sum, gate) => sum + (gate.y ?? 0), 0) / Math.max(1, venue.gates.length),
         venue.gates.reduce((sum, gate) => sum + gate.z, 0) / Math.max(1, venue.gates.length),
       ];
 
-  if (!visible || venue.gates.length === 0) return null;
+  // Stays mounted and hides instead of unmounting, so its HTML label is not
+  // torn down and rebuilt on every overlay toggle or venue switch.
+  const shown = visible && venue.gates.length > 0;
 
   return (
-    <group>
+    <group visible={shown}>
       {venue.gateLine && (
         <group position={[venue.gateLine.x, 0, venue.gateLine.z]} rotation={[0, venue.gateLine.rotation || 0, 0]}>
           {/* Canopy */}
@@ -110,8 +115,8 @@ export default function ExitGates() {
         <Gate key={gate.id} gate={gate} index={index} ratio={byId.get(gate.zone)?.ratio ?? null} />
       ))}
 
-      <Html position={label} center pointerEvents="none" distanceFactor={46}>
-        <div style={labelStyle}>
+      <Html position={label} center pointerEvents="none" zIndexRange={[9, 0]}>
+        <div style={{ ...labelStyle, display: shown ? 'block' : 'none' }}>
           {venue.gateLabel || 'EXITS'} — {known ? `${venue.gates.length} MONITORED` : 'NO ZONE PROJECTION'}
         </div>
       </Html>
@@ -122,7 +127,7 @@ export default function ExitGates() {
 const labelStyle = {
   background: NEO.surface,
   border: `2px solid ${NEO.ink}`,
-  padding: '4px 10px',
+  padding: '3px 8px',
   fontFamily: MONO,
   fontSize: '10px',
   fontWeight: 'bold',

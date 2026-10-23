@@ -1,13 +1,14 @@
 import { useMemo } from 'react';
 import { useZones, useVenue } from '../../store/derived';
 import ZoneTile from './ZoneTile';
-import Structures, { GROUND_Y } from './Structures';
+import Structures, { GROUND_Y, Tree } from './Structures';
+import { asphalt, surfaceTexture } from '../../lib/textures';
 import { NEO } from '../../theme';
 
 /**
- * The venue floor: ground plane, the walkways between zones when the venue
- * has them, foliage, perimeter structures and the 3×3 analysed grid rendered
- * as clickable zone tiles. Every dimension comes from the active venue.
+ * The venue floor: a textured ground plane, the walkways between zones when
+ * the venue has them, foliage, the venue's structures and the 3×3 analysed
+ * grid drawn as heat overlays. Every dimension comes from the active venue.
  */
 export default function VenuePlaza() {
   const venue = useVenue();
@@ -18,8 +19,12 @@ export default function VenuePlaza() {
   const edgeX = pitchX * 1.5 + 1.2;
   const edgeZ = pitchZ * 1.5 + 1.2;
   const hasWalkways = venue.gap.x > 0 && venue.gap.z > 0;
-  const groundSize = venue.ground?.size ?? 140;
-  const groundColor = venue.ground?.color || NEO.ground;
+  const ground = venue.ground || {};
+  const groundSize = ground.size ?? 140;
+  const groundMap = useMemo(
+    () => surfaceTexture(ground.texture, ground.repeat || [groundSize / 6, groundSize / 6]),
+    [ground.texture, ground.repeat, groundSize],
+  );
 
   const dashes = useMemo(() => {
     const marks = [];
@@ -28,8 +33,7 @@ export default function VenuePlaza() {
     return marks;
   }, [edgeX, edgeZ]);
 
-  // Trees line the walkways on venues that have them; a reconstruction may
-  // place its own instead (a park across the road, for instance).
+  // Trees line the walkways on venues that have them; a reconstruction places its own.
   const trees = useMemo(() => {
     if (venue.treePositions) return venue.treePositions;
     if (!venue.trees) return [];
@@ -43,12 +47,14 @@ export default function VenuePlaza() {
     return positions;
   }, [venue, pitchX]);
 
+  const walkwayMap = useMemo(() => asphalt([2, edgeZ / 3]), [edgeZ]);
+
   return (
     <group>
       {/* Ground plane */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, GROUND_Y - 0.005, 0]} receiveShadow>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, GROUND_Y + (ground.y ?? 0) - 0.005, 0]} receiveShadow>
         <planeGeometry args={[groundSize, groundSize]} />
-        <meshStandardMaterial color={groundColor} roughness={1.0} metalness={0.0} flatShading />
+        <meshStandardMaterial color={ground.color || NEO.ground} map={groundMap} roughness={1.0} metalness={0.0} />
       </mesh>
 
       {hasWalkways && (
@@ -56,36 +62,26 @@ export default function VenuePlaza() {
           {/* Cross walkways between zone tiles */}
           {[-1, 1].map((side) => (
             <group key={`lane-${side}`}>
-              <mesh rotation={[-Math.PI / 2, 0, 0]} position={[(side * pitchX) / 2, GROUND_Y, 0]} receiveShadow>
+              <mesh rotation={[-Math.PI / 2, 0, 0]} position={[(side * pitchX) / 2, GROUND_Y + 0.004, 0]} receiveShadow>
                 <planeGeometry args={[venue.gap.x, edgeZ * 2]} />
-                <meshStandardMaterial color={NEO.walkway} roughness={0.9} flatShading />
+                <meshStandardMaterial color="#8A8D92" map={walkwayMap} roughness={0.95} />
               </mesh>
-              <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, GROUND_Y, (side * pitchZ) / 2]} receiveShadow>
+              <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, GROUND_Y + 0.004, (side * pitchZ) / 2]} receiveShadow>
                 <planeGeometry args={[edgeX * 2, venue.gap.z]} />
-                <meshStandardMaterial color={NEO.walkway} roughness={0.9} flatShading />
+                <meshStandardMaterial color="#8A8D92" map={walkwayMap} roughness={0.95} />
               </mesh>
             </group>
           ))}
 
-          {/* Perimeter approach roads */}
-          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, GROUND_Y, -edgeZ - 4]} receiveShadow>
-            <planeGeometry args={[96, 3]} />
-            <meshStandardMaterial color={NEO.walkway} roughness={0.9} flatShading />
-          </mesh>
-          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, GROUND_Y, edgeZ + 4]} receiveShadow>
-            <planeGeometry args={[96, 3]} />
-            <meshStandardMaterial color={NEO.walkway} roughness={0.9} flatShading />
-          </mesh>
-
-          {/* Gold centre dashes */}
+          {/* Centre dashes */}
           {[-1, 1].map((side) =>
             dashes.map((step) => (
               <group key={`dash-${side}-${step}`}>
-                <mesh rotation={[-Math.PI / 2, 0, Math.PI / 2]} position={[(side * pitchX) / 2, GROUND_Y + 0.005, step]}>
+                <mesh rotation={[-Math.PI / 2, 0, Math.PI / 2]} position={[(side * pitchX) / 2, GROUND_Y + 0.008, step]}>
                   <planeGeometry args={[1.3, 0.09]} />
                   <meshBasicMaterial color={NEO.dash} />
                 </mesh>
-                <mesh rotation={[-Math.PI / 2, 0, 0]} position={[step, GROUND_Y + 0.005, (side * pitchZ) / 2]}>
+                <mesh rotation={[-Math.PI / 2, 0, 0]} position={[step, GROUND_Y + 0.008, (side * pitchZ) / 2]}>
                   <planeGeometry args={[1.3, 0.09]} />
                   <meshBasicMaterial color={NEO.dash} />
                 </mesh>
@@ -95,28 +91,16 @@ export default function VenuePlaza() {
         </>
       )}
 
-      {/* Analysed zone grid */}
+      <Structures />
+
+      {/* Analysed zone grid, drawn over the floor */}
       {zones.map((zone) => (
         <ZoneTile key={zone.id} zone={zone} />
       ))}
 
-      <Structures />
-
-      {/* Foliage */}
-      {trees.map((position, index) => (
-        <group key={`tree-${index}`} position={position}>
-          <mesh position={[0, -0.1, 0]} castShadow>
-            <cylinderGeometry args={[0.06, 0.06, 0.9, 8]} />
-            <meshStandardMaterial color={NEO.ink} roughness={0.9} />
-          </mesh>
-          <mesh position={[0, 0.55, 0]} castShadow>
-            <sphereGeometry args={[0.4, 12, 12]} />
-            <meshStandardMaterial color={NEO.foliage} roughness={1.0} flatShading />
-          </mesh>
-        </group>
+      {trees.map(([x, , z], index) => (
+        <Tree key={`tree-${index}`} item={{ x, z, scale: 0.55 }} />
       ))}
-
-      <gridHelper args={[groundSize, groundSize / 2, '#E0E0E0', groundColor]} position={[0, GROUND_Y + 0.002, 0]} />
     </group>
   );
 }

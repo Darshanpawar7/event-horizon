@@ -6,7 +6,8 @@ import { NEO, MONO, densityBand } from '../../theme';
 const HORIZONS = [1, 2, 3];
 
 const OVERLAYS = [
-  { key: 'density', label: 'DENSITY', color: NEO.orange },
+  { key: 'heat', label: 'HEAT', color: NEO.crimson },
+  { key: 'density', label: 'COLUMNS', color: NEO.orange },
   { key: 'trajectories', label: 'TRACKS', color: NEO.violet },
   { key: 'flow', label: 'FLOW', color: NEO.amber },
   { key: 'gates', label: 'EGRESS', color: NEO.green },
@@ -26,6 +27,8 @@ export default function ViewControls() {
   const setHorizon = useVenueStore((state) => state.setHorizon);
   const setThreshold = useVenueStore((state) => state.setThreshold);
   const toggleOverlay = useVenueStore((state) => state.toggleOverlay);
+  const quality = useVenueStore((state) => state.quality);
+  const setQuality = useVenueStore((state) => state.setQuality);
   const scenario = useVenueStore((state) => state.scenario);
   const venue = useVenue();
   const forecast = useForecast();
@@ -147,6 +150,35 @@ export default function ViewControls() {
               </button>
             );
           })}
+        </div>
+      </div>
+
+      {/* Render quality: ambient occlusion, bloom and anti-aliasing on HIGH */}
+      <div style={{ marginBottom: '10px' }}>
+        <div style={captionStyle}>RENDER QUALITY</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '4px' }}>
+          {['high', 'low'].map((value) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setQuality(value)}
+              aria-pressed={quality === value}
+              style={{
+                border: `2px solid ${NEO.ink}`,
+                background: quality === value ? NEO.ink : NEO.surface,
+                color: quality === value ? NEO.surface : NEO.ink,
+                fontFamily: MONO,
+                fontSize: '9px',
+                fontWeight: 900,
+                padding: '5px 0',
+                cursor: 'pointer',
+                borderRadius: '2px',
+                textTransform: 'uppercase',
+              }}
+            >
+              {value}
+            </button>
+          ))}
         </div>
       </div>
 
