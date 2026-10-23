@@ -41,9 +41,19 @@ const MOODS = {
   crush: { fog: 1.9, ambient: 0.95, tint: '#FF9C7A' },
 };
 
+/**
+ * How often the sun's shadow map is redrawn at each render tier. Structures
+ * never move, so only the crowd's shadows go stale between redraws; at
+ * twelve a second that is invisible, and the shadow pass stops costing a
+ * second render of the whole venue every frame.
+ */
+const SHADOW_INTERVAL = { high: 0, medium: 1 / 12, low: 1 / 5 };
+
 export default function SceneEffects() {
   const { scene, gl } = useThree();
   const venue = useVenue();
+  const tier = useVenueStore((state) => state.renderTier);
+  const shadowClock = useRef(0);
   const forecast = useForecast();
   const timeline = useTimeline();
   const lighting = { ...DEFAULT_LIGHTING, ...(venue.lighting || {}) };
@@ -92,9 +102,27 @@ export default function SceneEffects() {
     };
   }, [scene, gl, lighting.fog.color, lighting.fog.density, lighting.background, lighting.exposure, night]);
 
-  useFrame((state) => {
+  useEffect(() => {
+    const interval = SHADOW_INTERVAL[tier] ?? 0;
+    gl.shadowMap.autoUpdate = interval === 0;
+    gl.shadowMap.needsUpdate = true;
+    return () => {
+      gl.shadowMap.autoUpdate = true;
+    };
+  }, [gl, tier, venue.id]);
+
+  useFrame((state, delta) => {
     const time = state.clock.getElapsedTime();
     const ease = 0.04;
+
+    const interval = SHADOW_INTERVAL[tier] ?? 0;
+    if (interval > 0) {
+      shadowClock.current += delta;
+      if (shadowClock.current >= interval) {
+        shadowClock.current = 0;
+        gl.shadowMap.needsUpdate = true;
+      }
+    }
 
     if (hemisphereRef.current) {
       hemisphereRef.current.intensity = THREE.MathUtils.lerp(
@@ -148,9 +176,10 @@ export default function SceneEffects() {
         args={[lighting.hemisphere.sky, lighting.hemisphere.ground, lighting.hemisphere.intensity]}
       />
       <ambientLight ref={ambientRef} intensity={lighting.ambient} />
+      {/* Shadows only by day: a dim moon casts none worth a second render of the venue. */}
       <directionalLight
         ref={sunRef}
-        castShadow
+        castShadow={!night}
         position={lighting.sun}
         color={lighting.sunColor}
         intensity={lighting.sunIntensity}

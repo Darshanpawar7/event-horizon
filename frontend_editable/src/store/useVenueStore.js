@@ -34,13 +34,24 @@ let pollController = null;
 let signalTimers = [];
 let clockTimer = null;
 
+/** Render tiers from cheapest to richest; see PostFX and SceneEffects for what each draws. */
+export const RENDER_TIERS = ['low', 'medium', 'high'];
+
 /**
- * Render quality. `?quality=low` in the URL turns post-processing off, which
- * the headless verification uses and which a weak laptop can use too.
+ * Render quality: 'auto' (the default) lets the twin step between tiers to
+ * hold a smooth frame rate on the machine it runs on; 'high', 'medium' and
+ * 'low' pin one. `?quality=` in the URL picks it, which the headless checks
+ * use to pin a tier.
  */
 function initialQuality() {
-  if (typeof window === 'undefined') return 'high';
-  return new URLSearchParams(window.location.search).get('quality') === 'low' ? 'low' : 'high';
+  if (typeof window === 'undefined') return 'auto';
+  const asked = new URLSearchParams(window.location.search).get('quality');
+  return asked === 'auto' || RENDER_TIERS.includes(asked) ? asked : 'auto';
+}
+
+/** The tier drawn first: a pinned one, or medium for 'auto', which then climbs or drops. */
+function initialTier(quality) {
+  return quality === 'auto' ? 'medium' : quality;
 }
 
 /**
@@ -117,8 +128,14 @@ export const useVenueStore = create((set, get) => ({
   horizon: 2,
   threshold: scenarioThreshold('clear', getVenue(DEFAULT_VENUE_ID)).threshold,
   overlays: { density: true, trajectories: true, flow: true, gates: true, cameras: true, heat: true },
-  /** 'high' renders ambient occlusion, bloom and anti-aliasing; 'low' skips them. */
+  /** 'auto', 'high', 'medium' or 'low', as the operator chose it. */
   quality: initialQuality(),
+  /** The tier actually drawn: the pinned one, or whatever 'auto' settled on. */
+  renderTier: initialTier(initialQuality()),
+  /** A camera move asked for by a control (view preset, double-click); `seq` makes each request new. */
+  cameraRequest: null,
+  /** Slowly circle the current point of interest, for presenting. */
+  autoOrbit: false,
   /** Zone the camera is flown to and held on; null returns to the venue's vantage point. */
   focusZone: null,
 
@@ -364,7 +381,15 @@ export const useVenueStore = create((set, get) => ({
     set((state) => ({ selectedZone: state.selectedZone === zoneId ? null : zoneId })),
 
   setHorizon: (horizon) => set({ horizon }),
-  setQuality: (quality) => set({ quality }),
+  setQuality: (quality) => set((state) => ({ quality, renderTier: quality === 'auto' ? state.renderTier : quality })),
+  setRenderTier: (renderTier) => set({ renderTier }),
+  /**
+   * Fly the camera somewhere: `{ position, target }` in world coordinates.
+   * Leaves any zone focus, since the operator chose a new view.
+   */
+  requestCamera: (view) =>
+    set((state) => ({ focusZone: null, cameraRequest: { ...view, seq: (state.cameraRequest?.seq ?? 0) + 1 } })),
+  setAutoOrbit: (autoOrbit) => set({ autoOrbit }),
   /** Fly the twin camera to a zone, or back to the venue's vantage point with null. */
   focusOn: (zoneId) => set((state) => ({ focusZone: state.focusZone === zoneId ? null : zoneId })),
   setThreshold: (threshold) => set({ threshold }),
