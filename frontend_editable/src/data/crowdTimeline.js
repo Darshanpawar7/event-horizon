@@ -185,7 +185,7 @@ function frameIndex(frames, t) {
  * @param {Timeline} timeline
  * @param {number} t seconds relative to T0
  * @returns {{counts:number[], rates:number[], counterflow:number, outside:number,
- *   phase:object, phaseIndex:number}}
+ *   held:Record<string, number>, phase:object, phaseIndex:number}}
  */
 export function sampleTimeline(timeline, t) {
   const frames = timeline.keyframes;
@@ -202,11 +202,18 @@ export function sampleTimeline(timeline, t) {
     else break;
   }
 
+  const held = {};
+  for (const key of Object.keys({ ...(from.held || {}), ...(to.held || {}) })) {
+    const a = from.held?.[key] || 0;
+    held[key] = Math.round(a + ((to.held?.[key] || 0) - a) * ratio);
+  }
+
   return {
     counts: from.counts.map((value, i) => Math.round(value + (to.counts[i] - value) * ratio)),
     rates: from.counts.map((value, i) => (span > 0 ? (to.counts[i] - value) / span : 0)),
     counterflow: from.counterflow + (to.counterflow - from.counterflow) * ratio,
     outside: Math.round((from.outside || 0) + ((to.outside || 0) - (from.outside || 0)) * ratio),
+    held,
     phase: timeline.phases[phaseIndex],
     phaseIndex,
   };
@@ -223,7 +230,7 @@ export function sampleTimeline(timeline, t) {
  * @returns {object} forecast payload tagged `origin: 'simulated'`
  */
 export function timelineForecast(timeline, t, threshold) {
-  const { counts, rates, counterflow, outside, phase } = sampleTimeline(timeline, t);
+  const { counts, rates, counterflow, outside, held, phase } = sampleTimeline(timeline, t);
   const { areas } = timeline;
   const peakDensity = Math.max(...counts.map((count, i) => count / areas[i]));
 
@@ -270,6 +277,7 @@ export function timelineForecast(timeline, t, threshold) {
     coverage: round2(coverage),
     counterflow: round2(counterflow),
     outside,
+    held,
     cells,
     advice: peak
       ? `Inspect ${peak.cell}: ${peak.projected_tracks} eligible tracks projected at +${peak.horizon_s} s, ` +

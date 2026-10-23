@@ -134,7 +134,9 @@ export function rampAt(schedule, t) {
 /**
  * @typedef {object} Action one operator intervention, applied from `at` onward
  * @property {'meter'|'close'|'open'|'closeSink'|'link'|'counterflow'|'release'} type
- * @property {string} [source]  for meter/close
+ * @property {string} [source]  for meter/close: admission is capped at `rate`
+ *   (0 for close) and the rest of the demand waits outside the view, so a
+ *   hold has a visible cost instead of making people disappear
  * @property {string} [sink]    for open/closeSink
  * @property {number} [rate]    persons per second, for meter
  * @property {number} [width]   metres, for open (widen) or link
@@ -151,7 +153,8 @@ export function rampAt(schedule, t) {
  *
  * @param {ModelSpec} spec
  * @param {{at:number|null, actions:Action[]}} [intervention] applied from `at`
- * @returns {{keyframes:Array<{t:number,counts:number[],counterflow:number,outside:number}>,
+ * @returns {{keyframes:Array<{t:number,counts:number[],counterflow:number,outside:number,
+ *   held:Record<string, number>}>,
  *   stats:ReturnType<typeof summarise>}}
  */
 export function runModel(spec, intervention = { at: null, actions: [] }) {
@@ -162,7 +165,9 @@ export function runModel(spec, intervention = { at: null, actions: [] }) {
   const index = Object.fromEntries(spec.ids.map((id, i) => [id, i]));
 
   // Mutable copies of the parts an intervention may change.
-  const sources = spec.sources.map((source) => ({ ...source, queue: 0 }));
+  // `cap` is an operator's admission limit; demand above it waits outside the
+  // view (and is reported as held) rather than disappearing from the model.
+  const sources = spec.sources.map((source) => ({ ...source, queue: 0, cap: null }));
   const sinks = spec.sinks.map((sink) => ({ ...sink }));
   const links = spec.links.map((link) => ({ ...link }));
   let counterflowOverride = null;
@@ -177,7 +182,7 @@ export function runModel(spec, intervention = { at: null, actions: [] }) {
       for (const action of intervention.actions) {
         if (action.type === 'meter' || action.type === 'close') {
           const source = sources.find((item) => item.id === action.source);
-          if (source) source.rate = action.type === 'close' ? 0 : action.rate;
+          if (source) source.cap = action.type === 'close' ? 0 : action.rate;
         } else if (action.type === 'open' || action.type === 'closeSink') {
           const sink = sinks.find((item) => item.id === action.sink);
           if (sink) {
@@ -268,7 +273,8 @@ export function runModel(spec, intervention = { at: null, actions: [] }) {
       const arriving = stepAt(source.rate, t) * dt + source.queue;
       const room = Math.max(0, CRUSH_CAP * spec.areas[i] - next[i]);
       const pressure = next[i] / spec.areas[i] >= JAM_DENSITY ? PRESSURE_FACTOR : 1;
-      const admitted = Math.min(arriving, room * pressure);
+      const gate = source.cap == null ? Infinity : source.cap * dt;
+      const admitted = Math.min(arriving, room * pressure, gate);
       next[i] += admitted;
       source.queue = arriving - admitted;
       outside += source.queue;
@@ -281,6 +287,8 @@ export function runModel(spec, intervention = { at: null, actions: [] }) {
       counts: count.map((value) => Math.round(value)),
       counterflow: Math.round(counterflow * 100) / 100,
       outside: Math.round(outside),
+      // Per-source queue, so the twin can draw held people where they wait.
+      held: Object.fromEntries(sources.map((source) => [source.id, Math.round(source.queue)])),
     });
   }
 
